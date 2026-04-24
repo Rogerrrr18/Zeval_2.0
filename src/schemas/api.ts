@@ -38,4 +38,5 @@ export const evaluateRequestSchema = z.object({
   useLlm: z.boolean().optional(),
   artifactBaseName: z.string().min(1).optional(),
   persistArtifact: z.boolean().optional(),
+  asyncMode: z.boolean().optional(),
 });

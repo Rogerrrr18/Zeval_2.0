@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { createWorkbenchBaselineStore } from "@/workbench";
 import type { WorkbenchBaselineSnapshot } from "@/workbench/types";
 import { workbenchBaselineSaveSchema } from "@/schemas/workbench";
@@ -34,7 +35,8 @@ export async function POST(request: Request) {
       rawRows: body.rawRows,
     };
 
-    const store = createWorkbenchBaselineStore();
+    const context = getZeroreRequestContext(request);
+    const store = createWorkbenchBaselineStore({ workspaceId: context.workspaceId });
     await store.save(snapshot);
     return NextResponse.json({
       ok: true,

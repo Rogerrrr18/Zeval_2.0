@@ -10,10 +10,10 @@ import { FileSystemWorkbenchBaselineStore } from "@/workbench/baseline-file-stor
  *
  * @returns Active store implementation.
  */
-export function createWorkbenchBaselineStore(): WorkbenchBaselineStore {
+export function createWorkbenchBaselineStore(options?: { workspaceId?: string }): WorkbenchBaselineStore {
   const provider = (process.env.WORKBENCH_BASELINE_STORE_PROVIDER ?? "filesystem").trim().toLowerCase();
   if (provider === "filesystem") {
-    return new FileSystemWorkbenchBaselineStore();
+    return new FileSystemWorkbenchBaselineStore(options?.workspaceId);
   }
   throw new Error(`暂不支持的 workbench baseline store provider: ${provider}`);
 }

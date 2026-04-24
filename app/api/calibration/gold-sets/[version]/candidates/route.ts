@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { appendGoldSetCandidate } from "@/calibration/goldSetFileStore";
 import { buildGoldSetCandidateFromDatasetCase } from "@/calibration/goldSetCandidate";
+import { getZeroreRequestContext } from "@/auth/context";
 import { createDatasetStore } from "@/eval-datasets/storage";
 import { goldSetPromoteCandidateSchema } from "@/schemas/calibration";
 
@@ -21,7 +22,8 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "请求体不合法。", details: parsedBody.error.flatten() }, { status: 400 });
     }
 
-    const store = createDatasetStore();
+    const requestContext = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: requestContext.workspaceId });
     const datasetCase = await store.getCaseById(parsedBody.data.caseId);
     if (!datasetCase) {
       return NextResponse.json({ error: `未找到 dataset case: ${parsedBody.data.caseId}` }, { status: 404 });

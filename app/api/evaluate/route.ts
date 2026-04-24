@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getZeroreRequestContext } from "@/auth/context";
 import { redactRawRows } from "@/pii/redaction";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
+import { enqueueLocalJob } from "@/queue";
 import { evaluateRequestSchema } from "@/schemas/api";
 
 /**
@@ -24,6 +25,19 @@ export async function POST(request: Request) {
     const rawRows = redaction.rows;
     const runId = body.runId ?? `run_${Date.now()}`;
     const useLlm = Boolean(body.useLlm);
+    if (body.asyncMode) {
+      const job = await enqueueLocalJob({
+        workspaceId: context.workspaceId,
+        type: "evaluate",
+        payload: {
+          ...body,
+          rawRows,
+          runId,
+          piiRedaction: redaction.report,
+        },
+      });
+      return NextResponse.json({ queued: true, job, runId }, { status: 202 });
+    }
 
     console.info(`[EVALUATE] runId=${runId} START messages=${rawRows.length} useLlm=${useLlm}`);
     const response = await runEvaluatePipeline(rawRows, {

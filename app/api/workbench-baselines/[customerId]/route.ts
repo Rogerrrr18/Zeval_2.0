@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { createWorkbenchBaselineStore } from "@/workbench";
 
 type RouteContext = {
@@ -10,10 +11,11 @@ type RouteContext = {
  * @param _request Request.
  * @param context Route params.
  */
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
+    const requestContext = getZeroreRequestContext(request);
     const { customerId } = await context.params;
-    const store = createWorkbenchBaselineStore();
+    const store = createWorkbenchBaselineStore({ workspaceId: requestContext.workspaceId });
     const baselines = await store.list(decodeURIComponent(customerId));
     return NextResponse.json({ customerId: decodeURIComponent(customerId), baselines });
   } catch (error) {

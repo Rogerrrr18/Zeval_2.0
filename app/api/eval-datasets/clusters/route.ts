@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { buildBadCaseClusters } from "@/badcase/cluster";
 import { createDatasetStore } from "@/eval-datasets/storage";
 
 /**
  * Read lightweight bad case clusters from the current dataset store.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const cases = await store.listCases("badcase");
     const clusters = buildBadCaseClusters(cases);
 

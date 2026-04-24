@@ -9,8 +9,8 @@ import { FileSystemDatasetStore } from "@/eval-datasets/storage/file-system-data
  * Create the current dataset storage adapter.
  * @returns Active dataset store implementation.
  */
-export function createDatasetStore(): DatasetStore {
-  return new FileSystemDatasetStore();
+export function createDatasetStore(options?: { workspaceId?: string }): DatasetStore {
+  return new FileSystemDatasetStore(options?.workspaceId);
 }
 
 export type { DatasetStore } from "@/eval-datasets/storage/dataset-store";

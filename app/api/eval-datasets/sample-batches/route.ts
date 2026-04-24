@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { buildStratifiedSampleBatch } from "@/eval-datasets/sample-batch";
 import { createDatasetStore } from "@/eval-datasets/storage";
 import { evalDatasetCreateSampleBatchBodySchema } from "@/schemas/eval-datasets";
@@ -8,9 +9,10 @@ import { evalDatasetCreateSampleBatchBodySchema } from "@/schemas/eval-datasets"
  *
  * @returns Sample batch list.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const sampleBatches = await store.listSampleBatches();
     return NextResponse.json({ sampleBatches, count: sampleBatches.length });
   } catch (error) {
@@ -31,7 +33,8 @@ export async function POST(request: Request) {
     }
 
     const body = parsedBody.data;
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const { record, warnings } = await buildStratifiedSampleBatch(
       {
         store,

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
 import { replayAssistantRowsWithHttpApi, resolveReplyEndpoint } from "@/online-eval/replayAssistant";
 import { createWorkbenchBaselineStore } from "@/workbench";
@@ -16,11 +17,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "请求体不合法。", details: parsed.error.flatten() }, { status: 400 });
     }
     const body = parsed.data;
+    const context = getZeroreRequestContext(request);
 
     let rawRows = body.rawRows;
     let baselineEvaluate: EvaluateResponse | undefined;
     if (body.baselineRef) {
-      const store = createWorkbenchBaselineStore();
+      const store = createWorkbenchBaselineStore({ workspaceId: context.workspaceId });
       const snapshot = await store.read(body.baselineRef.customerId, body.baselineRef.runId);
       if (!snapshot) {
         return NextResponse.json({ error: "未找到基线快照，请检查 customerId 与 runId。" }, { status: 404 });
@@ -50,6 +52,7 @@ export async function POST(request: Request) {
       runId,
       scenarioId,
     });
+    evaluate.meta.workspaceId = context.workspaceId;
 
     return NextResponse.json({
       runId: evaluate.runId,

@@ -5,6 +5,7 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatasetStore } from "@/eval-datasets/storage/dataset-store";
+import { maybeWorkspacePath } from "@/workspaces/paths";
 import type {
   CaseSetType,
   DatasetBaselineRecord,
@@ -23,6 +24,12 @@ const DATASET_ROOT = "eval-datasets";
  * business-facing interface that a future database adapter can implement.
  */
 export class FileSystemDatasetStore implements DatasetStore {
+  private readonly rootDirectory: string;
+
+  constructor(workspaceId?: string) {
+    this.rootDirectory = maybeWorkspacePath(workspaceId, DATASET_ROOT);
+  }
+
   /**
    * @inheritdoc
    */
@@ -30,8 +37,8 @@ export class FileSystemDatasetStore implements DatasetStore {
     const caseDirectory = this.getCaseDirectory(record.caseSetType, record.caseId);
     await mkdir(caseDirectory, { recursive: true });
     await writeJsonFile(path.join(caseDirectory, "case.json"), record);
-    await appendCasesIndexRow(DATASET_ROOT, record);
-    await updateCaseSetManifest(DATASET_ROOT, record.caseSetType);
+    await appendCasesIndexRow(this.rootDirectory, record);
+    await updateCaseSetManifest(this.rootDirectory, record.caseSetType);
   }
 
   /**
@@ -84,7 +91,7 @@ export class FileSystemDatasetStore implements DatasetStore {
     const cases: DatasetCaseRecord[] = [];
 
     for (const currentSet of targetSets) {
-      const casesDirectory = path.join(DATASET_ROOT, currentSet, "cases");
+      const casesDirectory = path.join(this.rootDirectory, currentSet, "cases");
       try {
         const directoryItems = await readdir(casesDirectory, { withFileTypes: true });
         for (const item of directoryItems) {
@@ -149,7 +156,7 @@ export class FileSystemDatasetStore implements DatasetStore {
    * @inheritdoc
    */
   async saveRunResult(record: DatasetRunResultRecord): Promise<void> {
-    const runDirectory = path.join(DATASET_ROOT, "runs", record.runId);
+    const runDirectory = path.join(this.rootDirectory, "runs", record.runId);
     await mkdir(runDirectory, { recursive: true });
     const line = `${JSON.stringify(record)}\n`;
     const filePath = path.join(runDirectory, "case-results.jsonl");
@@ -160,7 +167,7 @@ export class FileSystemDatasetStore implements DatasetStore {
    * @inheritdoc
    */
   async saveSampleBatch(record: SampleBatchRecord): Promise<void> {
-    const samplesDirectory = path.join(DATASET_ROOT, "samples");
+    const samplesDirectory = path.join(this.rootDirectory, "samples");
     await mkdir(samplesDirectory, { recursive: true });
     await writeJsonFile(path.join(samplesDirectory, `${record.sampleBatchId}.json`), record);
   }
@@ -169,7 +176,7 @@ export class FileSystemDatasetStore implements DatasetStore {
    * @inheritdoc
    */
   async getSampleBatch(sampleBatchId: string): Promise<SampleBatchRecord | null> {
-    const filePath = path.join(DATASET_ROOT, "samples", `${sampleBatchId}.json`);
+    const filePath = path.join(this.rootDirectory, "samples", `${sampleBatchId}.json`);
     try {
       return (await readJsonFile(filePath)) as SampleBatchRecord;
     } catch {
@@ -181,7 +188,7 @@ export class FileSystemDatasetStore implements DatasetStore {
    * @inheritdoc
    */
   async listSampleBatches(): Promise<SampleBatchRecord[]> {
-    const samplesDirectory = path.join(DATASET_ROOT, "samples");
+    const samplesDirectory = path.join(this.rootDirectory, "samples");
     let names: string[] = [];
     try {
       names = await readdir(samplesDirectory);
@@ -218,7 +225,7 @@ export class FileSystemDatasetStore implements DatasetStore {
    * @returns Case directory path.
    */
   private getCaseDirectory(caseSetType: "goodcase" | "badcase", caseId: string): string {
-    return path.join(DATASET_ROOT, caseSetType, "cases", caseId);
+    return path.join(this.rootDirectory, caseSetType, "cases", caseId);
   }
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { harvestBadCasesToDataset } from "@/eval-datasets/harvest-badcases";
 import { createDatasetStore } from "@/eval-datasets/storage";
 import { evalDatasetHarvestBadcasesBodySchema } from "@/schemas/eval-datasets";
@@ -15,7 +16,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "请求体不合法。", details: parsedBody.error.flatten() }, { status: 400 });
     }
 
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const result = await harvestBadCasesToDataset({
       store,
       evaluate: parsedBody.data.evaluate as EvaluateResponse,

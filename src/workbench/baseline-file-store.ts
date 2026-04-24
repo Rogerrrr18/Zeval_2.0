@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { maybeWorkspacePath } from "@/workspaces/paths";
 import type { WorkbenchBaselineStore } from "@/workbench/baseline-store";
 import type { WorkbenchBaselineIndexRow, WorkbenchBaselineLookup, WorkbenchBaselineSnapshot } from "@/workbench/types";
 
@@ -14,11 +15,17 @@ const BASELINE_ROOT = path.join("mock-chatlog", "baselines");
  * Filesystem-backed workbench baseline store.
  */
 export class FileSystemWorkbenchBaselineStore implements WorkbenchBaselineStore {
+  private readonly rootDirectory: string;
+
+  constructor(workspaceId?: string) {
+    this.rootDirectory = maybeWorkspacePath(workspaceId, BASELINE_ROOT);
+  }
+
   /**
    * @inheritdoc
    */
   async save(snapshot: WorkbenchBaselineSnapshot): Promise<void> {
-    const directory = path.join(BASELINE_ROOT, sanitizeCustomerId(snapshot.customerId));
+    const directory = path.join(this.rootDirectory, sanitizeCustomerId(snapshot.customerId));
     await mkdir(directory, { recursive: true });
     const fileName = `${sanitizeRunIdForFile(snapshot.runId)}.json`;
     const filePath = path.join(directory, fileName);
@@ -29,7 +36,7 @@ export class FileSystemWorkbenchBaselineStore implements WorkbenchBaselineStore 
    * @inheritdoc
    */
   async list(customerId: string): Promise<WorkbenchBaselineIndexRow[]> {
-    const directory = path.join(BASELINE_ROOT, sanitizeCustomerId(customerId));
+    const directory = path.join(this.rootDirectory, sanitizeCustomerId(customerId));
     let names: string[] = [];
     try {
       names = await readdir(directory);
@@ -73,7 +80,7 @@ export class FileSystemWorkbenchBaselineStore implements WorkbenchBaselineStore 
    * @inheritdoc
    */
   async read(customerId: string, runId: string): Promise<WorkbenchBaselineSnapshot | null> {
-    const directory = path.join(BASELINE_ROOT, sanitizeCustomerId(customerId));
+    const directory = path.join(this.rootDirectory, sanitizeCustomerId(customerId));
     const filePath = path.join(directory, `${sanitizeRunIdForFile(runId)}.json`);
     try {
       const raw = await readFile(filePath, "utf8");
@@ -89,7 +96,7 @@ export class FileSystemWorkbenchBaselineStore implements WorkbenchBaselineStore 
   async findByRunId(runId: string): Promise<WorkbenchBaselineLookup | null> {
     let entries: Array<{ name: string; isDirectory: () => boolean }> = [];
     try {
-      entries = await readdir(BASELINE_ROOT, { withFileTypes: true });
+      entries = await readdir(this.rootDirectory, { withFileTypes: true });
     } catch {
       return null;
     }
@@ -100,7 +107,7 @@ export class FileSystemWorkbenchBaselineStore implements WorkbenchBaselineStore 
         continue;
       }
 
-      const filePath = path.join(BASELINE_ROOT, entry.name, fileName);
+      const filePath = path.join(this.rootDirectory, entry.name, fileName);
       try {
         const raw = await readFile(filePath, "utf8");
         const snapshot = JSON.parse(raw) as WorkbenchBaselineSnapshot;

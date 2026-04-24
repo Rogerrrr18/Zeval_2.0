@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
+import { getZeroreRequestContext } from "@/auth/context";
 import { computeNormalizedTranscriptHash } from "@/eval-datasets/case-transcript-hash";
 import { createDatasetStore } from "@/eval-datasets/storage";
 import type { DatasetBaselineRecord, DatasetCaseRecord } from "@/eval-datasets/storage/types";
@@ -19,7 +20,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "查询参数不合法。", details: parsedQuery.error.flatten() }, { status: 400 });
     }
 
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const cases = await store.listCases(parsedQuery.data.caseSetType);
     return NextResponse.json({ cases, count: cases.length });
   } catch (error) {
@@ -40,7 +42,8 @@ export async function POST(request: Request) {
     }
 
     const body = parsedBody.data;
-    const store = createDatasetStore();
+    const context = getZeroreRequestContext(request);
+    const store = createDatasetStore({ workspaceId: context.workspaceId });
     const normalizedTranscriptHash = computeNormalizedTranscriptHash(body.transcript);
     const duplicate = await store.checkDuplicate({
       normalizedTranscriptHash,

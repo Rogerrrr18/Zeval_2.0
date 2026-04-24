@@ -86,6 +86,18 @@ export async function readGoldSetLabelDrafts(version: string): Promise<GoldSetLa
 }
 
 /**
+ * Read one label draft by task ID.
+ *
+ * @param version Gold-set version.
+ * @param taskId Task ID.
+ * @returns Draft record.
+ */
+export async function readGoldSetLabelDraft(version: string, taskId: string): Promise<GoldSetLabelDraftRecord> {
+  const filePath = resolveGoldSetLabelDraftPath(version, taskId);
+  return JSON.parse(await readFile(filePath, "utf8")) as GoldSetLabelDraftRecord;
+}
+
+/**
  * Save one label draft and keep the task index status aligned.
  *
  * @param version Gold-set version.

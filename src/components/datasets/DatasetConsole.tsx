@@ -455,6 +455,22 @@ export function DatasetConsole() {
                   <span className={styles.severityBadge}>{selectedValidation?.importable ? "READY" : "DRAFT"}</span>
                 </div>
 
+                {selectedDraft.autoPrefill ? (
+                  <div className={styles.prefillBox}>
+                    <strong>Auto-prefill</strong>
+                    <span>
+                      source={selectedDraft.autoPrefill.source} · generatedAt={selectedDraft.autoPrefill.generatedAt}
+                    </span>
+                    <div className={styles.metaRow}>
+                      {selectedDraft.autoPrefill.reasons.map((reason) => (
+                        <span className={styles.tagPill} key={reason}>
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className={styles.editorGrid}>
                   <label className={styles.label}>
                     Review Status
@@ -657,6 +673,19 @@ export function DatasetConsole() {
                       updateSelectedDraft((draft) => ({
                         ...draft,
                         recoveryTrace: { ...draft.recoveryTrace, notes: event.target.value },
+                      }))
+                    }
+                  />
+                </label>
+                <label className={styles.label}>
+                  Review Notes
+                  <textarea
+                    className={styles.textarea}
+                    value={selectedDraft.reviewNotes ?? ""}
+                    onChange={(event) =>
+                      updateSelectedDraft((draft) => ({
+                        ...draft,
+                        reviewNotes: event.target.value,
                       }))
                     }
                   />

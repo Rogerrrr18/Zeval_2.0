@@ -118,6 +118,11 @@ export type GoldSetLabelDraftRecord = {
   reviewer?: string;
   reviewedAt?: string;
   reviewNotes?: string;
+  autoPrefill?: {
+    source: string;
+    generatedAt: string;
+    reasons: string[];
+  };
 };
 
 /**

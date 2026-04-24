@@ -39,6 +39,13 @@ export const goldSetLabelDraftSchema = z.object({
   reviewer: z.string().optional(),
   reviewedAt: z.string().optional(),
   reviewNotes: z.string().optional(),
+  autoPrefill: z
+    .object({
+      source: z.string().min(1),
+      generatedAt: z.string().min(1),
+      reasons: z.array(z.string()),
+    })
+    .optional(),
 });
 
 /**

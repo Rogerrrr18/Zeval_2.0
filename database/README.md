@@ -11,6 +11,7 @@ The current app can still run with local files and the local JSON adapter. The d
 - PostgreSQL/Supabase is the intended production system of record.
 - Local JSON remains the development fallback and smoke artifact path.
 - Evaluate/baseline JSON files remain export and audit snapshots, not the long-term query model.
+- `zerore_records` is the temporary JSONB bridge table used by the current `ZeroreDatabase` interface.
 
 ## Schema Groups
 
@@ -29,8 +30,31 @@ The migration should be incremental:
 1. Keep the existing pipeline and artifact outputs unchanged.
 2. Add an evaluate projection layer that converts `EvaluateResponse` into normalized database records. This is now implemented in `src/db/evaluation-projection.ts`.
 3. Write projections through the current `ZeroreDatabase` interface first. Synchronous `/api/evaluate` runs now write these records through the local JSON adapter.
-4. Add a Postgres adapter behind the same interface.
+4. Add a Postgres adapter behind the same interface. This is available with `ZERORE_DATABASE_ADAPTER=postgres`.
 5. Migrate gold set, bad case, agent run and validation stores one domain at a time.
+
+## Adapter Configuration
+
+Default local mode:
+
+```bash
+ZERORE_DATABASE_ADAPTER=local-json
+```
+
+Postgres/Supabase bridge mode:
+
+```bash
+ZERORE_DATABASE_ADAPTER=postgres
+DATABASE_URL=postgres://user:password@host:5432/database
+ZERORE_POSTGRES_SSL=auto
+ZERORE_POSTGRES_POOL_MAX=5
+```
+
+`ZERORE_POSTGRES_SSL` accepts:
+
+- `auto`: enable relaxed SSL for common managed Postgres hosts such as Supabase/Neon.
+- `require`: always enable relaxed SSL.
+- `disable`: do not enable SSL, useful for local Docker Postgres.
 
 ## Traceability Rule
 

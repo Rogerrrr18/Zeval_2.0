@@ -11,6 +11,7 @@ export const DB_TABLES = [
   "workspace_members",
   "api_keys",
   "audit_logs",
+  "zerore_records",
   "datasets",
   "dataset_imports",
   "sessions",

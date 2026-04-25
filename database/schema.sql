@@ -62,6 +62,19 @@ create table audit_logs (
   created_at timestamptz not null default now()
 );
 
+-- Bridge table used by the current ZeroreDatabase adapter.
+-- It lets the projection layer write JSONB records to Postgres before every
+-- domain store has been migrated to typed relational tables.
+create table zerore_records (
+  workspace_id text not null,
+  type text not null,
+  id text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (workspace_id, type, id)
+);
+
 create table datasets (
   id text primary key,
   workspace_id text not null references workspaces(id) on delete cascade,
@@ -488,6 +501,7 @@ create table jobs (
 );
 
 create index idx_dataset_imports_workspace_created on dataset_imports(workspace_id, created_at desc);
+create index idx_zerore_records_workspace_type_updated on zerore_records(workspace_id, type, updated_at desc);
 create index idx_sessions_workspace_dataset on sessions(workspace_id, dataset_id);
 create index idx_message_turns_session_turn on message_turns(session_id, turn_index);
 create index idx_evaluation_runs_workspace_generated on evaluation_runs(workspace_id, generated_at desc);

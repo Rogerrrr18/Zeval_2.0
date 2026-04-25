@@ -17,15 +17,31 @@ export interface ZeroreDatabase {
   list(workspaceId: string, type: string): Promise<DbRecord[]>;
 }
 
+export type ZeroreDatabaseAdapter = "local-json" | "postgres";
+
 /**
  * Create the active database adapter.
  *
- * The current adapter is intentionally local and JSON-backed so the app remains
- * dependency-free. The interface is the seam for Postgres/Supabase migration.
+ * Defaults to local JSON so development stays dependency-free. Set
+ * `ZERORE_DATABASE_ADAPTER=postgres` with `DATABASE_URL` to write through the
+ * Postgres bridge adapter.
  *
  * @returns Database adapter.
  */
 export async function createZeroreDatabase(): Promise<ZeroreDatabase> {
+  const adapter = resolveDatabaseAdapter();
+  if (adapter === "postgres") {
+    const { createPostgresDatabaseFromEnv } = await import("@/db/postgres-database");
+    return createPostgresDatabaseFromEnv();
+  }
   const { LocalJsonDatabase } = await import("@/db/local-json-database");
   return new LocalJsonDatabase();
+}
+
+function resolveDatabaseAdapter(): ZeroreDatabaseAdapter {
+  const adapter = process.env.ZERORE_DATABASE_ADAPTER ?? "local-json";
+  if (adapter === "postgres" || adapter === "local-json") {
+    return adapter;
+  }
+  throw new Error(`Unsupported ZERORE_DATABASE_ADAPTER: ${adapter}`);
 }

@@ -102,6 +102,7 @@ ZERORE 当前不追求做一个“大而全 eval 平台”，而是优先做：
 - `src/auth/context.ts`：本地 auth/workspace context，支持 `x-zerore-user-id`、`x-zerore-workspace-id`、`x-zerore-role`。
 - `src/pii/redaction.ts`：默认开启的 PII 脱敏，已接入 ingest / evaluate；可用 `PII_REDACTION_ENABLED=false` 关闭。
 - `src/db/*`：workspace 分区的 local JSON database adapter，后续替换 Postgres/Supabase 时保持接口不变。
+- `src/db/postgres-database.ts`：Postgres/Supabase JSONB bridge adapter，可通过 `ZERORE_DATABASE_ADAPTER=postgres` 与 `DATABASE_URL` 切换。
 - `src/queue/index.ts` 与 `/api/jobs`：本地异步任务队列合约，后续可替换 Redis/BullMQ/Temporal。
 - `calibration/scripts/expand-gold-from-fixtures.mts`：从 fixture chatlog 扩充 gold set draft，当前 `v2` 已扩到 12 条。
 
@@ -202,13 +203,14 @@ ZERORE 当前不追求做一个“大而全 eval 平台”，而是优先做：
 - 现阶段：`FileSystemDatasetStore`（本地文件）用于 MVP 快速落地与可视化调试。
 - 后续阶段：可新增并切换到数据库/BaaS 实现（例如 `PostgreSQL`、`Supabase`）。
 - 数据库目标结构见 `database/schema.sql`，其核心原则是把评测输出拆成 `evaluation_runs / topic_segments / objective_signals / subjective_signals / business_kpi_signals / evidence_spans / risk_tags` 等可 join 的质量信号表。
+- 当前 `ZeroreDatabase` 已支持 `local-json` 与 `postgres` 两种 adapter；Postgres 模式先写 `zerore_records` JSONB bridge table，后续再迁移到 typed tables。
 
 建议迁移路径：
 
 1. 保持 `DatasetStore` 接口稳定（`create/list/checkDuplicate/saveSampleBatch` 等）。
 2. 为工作台基线新增与 `DatasetStore` 平级的 `WorkbenchBaselineStore` 抽象，避免继续直接写文件。
-3. 先实现 evaluate projection layer，将现有 `EvaluateResponse` 投影到关系型质量信号记录。
-4. 新增 `PostgresDatasetStore` / `PostgresWorkbenchBaselineStore` / `PostgresDatabaseAdapter` 并完成等价实现。
+3. 已实现 evaluate projection layer，将现有 `EvaluateResponse` 投影到关系型质量信号记录。
+4. 已实现 `PostgresDatabaseAdapter` bridge；下一步再补 `PostgresDatasetStore` / `PostgresWorkbenchBaselineStore` 的等价实现。
 5. 在工厂函数中通过环境变量切换存储实现，保留文件系统 fallback。
 6. 先双写校验，再切主读，最后下线文件系统主路径。
 

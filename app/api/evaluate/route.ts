@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getZeroreRequestContext } from "@/auth/context";
+import { buildEvaluationProjection, persistEvaluationProjection } from "@/db/evaluation-projection";
+import { createZeroreDatabase } from "@/db";
 import { redactRawRows } from "@/pii/redaction";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
 import { enqueueLocalJob } from "@/queue";
@@ -59,6 +61,23 @@ export async function POST(request: Request) {
       response.meta.warnings.push(
         `PII 脱敏已处理 ${redaction.report.redactedFields} 处：${redaction.report.categories.join(", ")}。`,
       );
+    }
+    try {
+      const projection = buildEvaluationProjection(response, {
+        workspaceId: context.workspaceId,
+        runId,
+        useLlm,
+      });
+      const database = await createZeroreDatabase();
+      await persistEvaluationProjection(database, projection);
+      console.info(
+        `[EVALUATE] runId=${runId} PROJECTION records=${projection.dbRecords.length} evidence=${projection.summary.evidenceSpans}`,
+      );
+    } catch (projectionError) {
+      const projectionMessage =
+        projectionError instanceof Error ? projectionError.message : "evaluation projection 未知错误";
+      response.meta.warnings.push(`结构化质量信号写入失败：${projectionMessage}`);
+      console.warn(`[EVALUATE] runId=${runId} PROJECTION_FAILED ${projectionMessage}`);
     }
 
     console.info(`[EVALUATE] runId=${runId} DONE warnings=${response.meta.warnings.length}`);

@@ -163,6 +163,7 @@ export type DbRiskTag = DbBaseEntity & {
   table: "risk_tags";
   evaluationRunId: string;
   sessionId?: string;
+  topicSegmentId?: string;
   tagKey: string;
   severityScore?: number;
   reason?: string;

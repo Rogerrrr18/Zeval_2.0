@@ -245,6 +245,7 @@ create table risk_tags (
   workspace_id text not null references workspaces(id) on delete cascade,
   evaluation_run_id text not null references evaluation_runs(id) on delete cascade,
   session_id text references sessions(id) on delete cascade,
+  topic_segment_id text references topic_segments(id) on delete set null,
   tag_key text not null,
   severity_score numeric(6,2),
   reason text,

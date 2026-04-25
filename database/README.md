@@ -27,8 +27,8 @@ The current app can still run with local files and the local JSON adapter. The d
 The migration should be incremental:
 
 1. Keep the existing pipeline and artifact outputs unchanged.
-2. Add an evaluate projection layer that converts `EvaluateResponse` into normalized database records.
-3. Write projections through the current `ZeroreDatabase` interface first.
+2. Add an evaluate projection layer that converts `EvaluateResponse` into normalized database records. This is now implemented in `src/db/evaluation-projection.ts`.
+3. Write projections through the current `ZeroreDatabase` interface first. Synchronous `/api/evaluate` runs now write these records through the local JSON adapter.
 4. Add a Postgres adapter behind the same interface.
 5. Migrate gold set, bad case, agent run and validation stores one domain at a time.
 

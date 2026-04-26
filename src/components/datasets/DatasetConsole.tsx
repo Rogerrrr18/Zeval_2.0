@@ -4,7 +4,6 @@
 
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BadCaseCluster } from "@/badcase/types";
 import type {
@@ -12,8 +11,16 @@ import type {
   GoldSetLabelDraftRecord,
   GoldSetReviewStatus,
 } from "@/calibration/types";
+import { AppShell, Stepper, type StepperStep } from "@/components/shell";
 import type { DatasetCaseRecord } from "@/eval-datasets/storage/types";
 import styles from "./datasetConsole.module.css";
+
+type DatasetTab = "browse" | "gold";
+
+const STEPS: StepperStep[] = [
+  { key: "browse", title: "1 · 浏览案例池", hint: "已沉淀 bad case + cluster" },
+  { key: "gold", title: "2 · 标注 Gold Set", hint: "审核 → 导入 labels.jsonl" },
+];
 
 type ClusterResponse = {
   clusters: BadCaseCluster[];
@@ -80,6 +87,7 @@ export function DatasetConsole() {
   const [notice, setNotice] = useState("");
   const [goldNotice, setGoldNotice] = useState("");
   const [selectedScenarioId, setSelectedScenarioId] = useState("");
+  const [activeTab, setActiveTab] = useState<DatasetTab>("browse");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -302,51 +310,93 @@ export function DatasetConsole() {
     }
   }, [loadGoldTasks]);
 
+  const stepIndex = activeTab === "browse" ? 0 : 1;
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <header className={styles.topBar}>
-          <div className={styles.titleBlock}>
-            <h1>Bad Case 案例池</h1>
-            <p>浏览已沉淀的失败案例、轻量 cluster 和主导标签，为后续 sample batch、replay 与调优包提供素材。</p>
-          </div>
-          <div className={styles.navRow}>
-            <Link className={styles.navLink} href="/workbench">
-              返回工作台
-            </Link>
-            <Link className={styles.navLink} href="/remediation-packages">
-              调优包
-            </Link>
-            <Link className={styles.navLink} href="/online-eval">
-              在线评测
-            </Link>
-          </div>
-        </header>
+    <AppShell
+      subheader={
+        <Stepper
+          steps={STEPS}
+          current={stepIndex}
+          completed={1}
+          onSelect={(index) => setActiveTab(index === 0 ? "browse" : "gold")}
+        />
+      }
+    >
+      <div className={styles.page}>
+        <main className={styles.main}>
+          <header className={styles.topBar}>
+            <div className={styles.titleBlock}>
+              <h1>Bad Case 案例池</h1>
+              <p>浏览沉淀的失败案例与 cluster；把高价值 case 推进 Gold Set 标注流，为 judge 校准提供 ground truth。</p>
+            </div>
+          </header>
 
-        <section className={styles.heroGrid}>
-          <article className={styles.heroCard}>
-            <span>Total Cases</span>
-            <strong>{cases.length}</strong>
-            <small>已入池 bad case 总数</small>
-          </article>
-          <article className={styles.heroCard}>
-            <span>Total Clusters</span>
-            <strong>{clusters.length}</strong>
-            <small>按轻量相似度聚合后的 cluster 数</small>
-          </article>
-          <article className={styles.heroCard}>
-            <span>Avg Severity</span>
-            <strong>{averageSeverity}</strong>
-            <small>failureSeverityScore 的平均值</small>
-          </article>
-          <article className={styles.heroCard}>
-            <span>Gold Tasks</span>
-            <strong>{goldStats?.totalTasks ?? goldTasks.length}</strong>
-            <small>{goldStats?.approvedImportable ?? 0} 个可导入 approved label</small>
-          </article>
-        </section>
+          <section className={styles.heroGrid}>
+            <article className={styles.heroCard}>
+              <span>Total Cases</span>
+              <strong>{cases.length}</strong>
+              <small>已入池 bad case 总数</small>
+            </article>
+            <article className={styles.heroCard}>
+              <span>Total Clusters</span>
+              <strong>{clusters.length}</strong>
+              <small>按轻量相似度聚合后的 cluster 数</small>
+            </article>
+            <article className={styles.heroCard}>
+              <span>Avg Severity</span>
+              <strong>{averageSeverity}</strong>
+              <small>failureSeverityScore 平均值</small>
+            </article>
+            <article className={styles.heroCard}>
+              <span>Gold Tasks</span>
+              <strong>{goldStats?.totalTasks ?? goldTasks.length}</strong>
+              <small>{goldStats?.approvedImportable ?? 0} 条可导入</small>
+            </article>
+          </section>
 
-        <section className={styles.panel}>
+          <div className={styles.tabBar}>
+            <button
+              type="button"
+              className={`${styles.tabButton} ${activeTab === "browse" ? styles.tabActive : ""}`}
+              onClick={() => setActiveTab("browse")}
+            >
+              Bad Case 池
+            </button>
+            <button
+              type="button"
+              className={`${styles.tabButton} ${activeTab === "gold" ? styles.tabActive : ""}`}
+              onClick={() => setActiveTab("gold")}
+            >
+              Gold Set 标注
+            </button>
+          </div>
+
+          {activeTab === "browse" ? (
+            <section className={styles.stepIntro}>
+              <h2>浏览 Bad Case 与 cluster</h2>
+              <p>这里是工作台「沉淀到案例池」按钮的归宿。已抽出的失败案例按轻量聚类分组，主导标签可一眼识别热点。</p>
+              <div className={styles.howTo}>
+                <span className={styles.howToTitle}>怎么用</span>
+                <span>① 用「场景筛选」聚焦特定业务；点 cluster 展开看其内部 case。</span>
+                <span>② 觉得某个 case 值得作为 ground truth，点「转为 Gold Candidate」推进到第 2 步。</span>
+              </div>
+            </section>
+          ) : (
+            <section className={styles.stepIntro}>
+              <h2>Gold Set v2 标注流</h2>
+              <p>把 candidate 变成可分配、可审核、可导入的标注任务；只有 approved 且校验通过的 draft 会进入 labels.jsonl。</p>
+              <div className={styles.howTo}>
+                <span className={styles.howToTitle}>怎么用</span>
+                <span>① 左侧选一个任务；右侧编辑 dimension 评分、Goal / Recovery 状态与 evidence。</span>
+                <span>② 把 reviewStatus 改成 approved 并保存。</span>
+                <span>③ 点右上「导入 approved」把通过校验的 label 写入 gold set。</span>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "browse" ? (
+          <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <div>
               <h2>筛选与概览</h2>
@@ -383,8 +433,10 @@ export function DatasetConsole() {
             ))}
           </div>
         </section>
+          ) : null}
 
-        <section className={styles.panel}>
+          {activeTab === "gold" ? (
+          <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <div>
               <h2>Gold Set v2 标注任务</h2>
@@ -711,8 +763,10 @@ export function DatasetConsole() {
             )}
           </div>
         </section>
+          ) : null}
 
-        <section className={styles.panel}>
+          {activeTab === "browse" ? (
+          <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <div>
               <h2>Clusters</h2>
@@ -782,7 +836,9 @@ export function DatasetConsole() {
             )}
           </div>
         </section>
-      </main>
-    </div>
+          ) : null}
+        </main>
+      </div>
+    </AppShell>
   );
 }

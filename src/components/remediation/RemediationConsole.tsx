@@ -4,10 +4,10 @@
 
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { AgentRunIndexRow, AgentRunSnapshot, AgentRunStatus } from "@/agent-runs";
 import { RemediationPackagePanel } from "@/components/home/RemediationPackagePanel";
+import { AppShell, Stepper, type StepperStep } from "@/components/shell";
 import type { SampleBatchRecord } from "@/eval-datasets/storage/types";
 import {
   TEMP_EVAL_SAMPLE_BADCASE_TARGET,
@@ -63,6 +63,13 @@ type AgentRunDetailResponse = {
   agentRun: AgentRunSnapshot;
 };
 
+const STEPS: StepperStep[] = [
+  { key: "select", title: "1 · 选调优包", hint: "内容 / blocker" },
+  { key: "task", title: "2 · 生成任务", hint: "Prompt / Issue / PR" },
+  { key: "agent", title: "3 · 跟踪修复", hint: "Agent run" },
+  { key: "validate", title: "4 · 验证发布", hint: "Replay / Offline" },
+];
+
 /**
  * Render the persistent remediation package viewer.
  *
@@ -109,6 +116,7 @@ export function RemediationConsole() {
   const [sampleBatchLoading, setSampleBatchLoading] = useState(false);
   const [sampleBatchCreating, setSampleBatchCreating] = useState(false);
   const [packageUpdating, setPackageUpdating] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("zerore:lastCustomerId");
@@ -744,25 +752,37 @@ export function RemediationConsole() {
     allAgentRuns,
     allValidationRuns,
   );
+  const completedStep = selectedValidationRun ? 3 : selectedAgentRun ? 2 : agentTask || taskFlowDraft ? 1 : 0;
+  const maxReachableStep = selectedPackageId ? 3 : 0;
+
+  function goToStep(index: number) {
+    if (index < 0 || index >= STEPS.length) {
+      return;
+    }
+    if (index > maxReachableStep) {
+      return;
+    }
+    setCurrentStep(index);
+  }
 
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
+    <AppShell
+      subheader={
+        <Stepper
+          steps={STEPS}
+          current={currentStep}
+          completed={completedStep}
+          maxReachable={maxReachableStep}
+          onSelect={goToStep}
+        />
+      }
+    >
+      <div className={styles.page}>
+        <main className={styles.main}>
         <header className={styles.topBar}>
           <div className={styles.titleBlock}>
-            <h1>Remediation Packages</h1>
-            <p>浏览已经生成的调优包，直接查看 `issue-brief`、`spec`、`badcases` 与 `acceptance gate`。</p>
-          </div>
-          <div className={styles.navRow}>
-            <Link className={styles.navLink} href="/workbench">
-              工作台
-            </Link>
-            <Link className={styles.navLink} href="/datasets">
-              案例池
-            </Link>
-            <Link className={styles.navLink} href="/online-eval">
-              在线评测
-            </Link>
+            <h1>调优包</h1>
+            <p>选包 → 生成任务 → 跟踪 agent 修复 → 回放验证。调优交付物和执行记录在这里闭环。</p>
           </div>
         </header>
 
@@ -793,7 +813,10 @@ export function RemediationConsole() {
                       className={item.packageId === selectedPackageId ? styles.packageItemActive : styles.packageItem}
                       key={item.packageId}
                       type="button"
-                      onClick={() => setSelectedPackageId(item.packageId)}
+                      onClick={() => {
+                        setSelectedPackageId(item.packageId);
+                        setCurrentStep(0);
+                      }}
                     >
                       <div className={styles.packageTitleRow}>
                         <strong>{item.title}</strong>
@@ -836,15 +859,17 @@ export function RemediationConsole() {
                 <span className={styles.meta}>{selectedPackageId || "未选择"}</span>
               </div>
             </div>
-            <RemediationPackagePanel
-              packageSnapshot={selectedPackage}
-              loading={detailLoading}
-              canGenerate={false}
-              onGenerate={() => undefined}
-              showGenerateAction={false}
-            />
+            {currentStep === 0 ? (
+              <>
+                <RemediationPackagePanel
+                  packageSnapshot={selectedPackage}
+                  loading={detailLoading}
+                  canGenerate={false}
+                  onGenerate={() => undefined}
+                  showGenerateAction={false}
+                />
 
-            <section className={styles.viewerSection}>
+                <section className={styles.viewerSection}>
               <div className={styles.sectionHeader}>
                 <div>
                   <h3>Workflow Status</h3>
@@ -945,9 +970,13 @@ export function RemediationConsole() {
               ) : (
                 <div className={styles.emptyInline}>选择调优包后即可查看 blocker summary。</div>
               )}
-            </section>
+                </section>
+              </>
+            ) : null}
 
-            <section className={styles.viewerSection}>
+            {currentStep === 1 ? (
+              <>
+                <section className={styles.viewerSection}>
               <div className={styles.sectionHeader}>
                 <div>
                   <h3>Agent Task</h3>
@@ -983,9 +1012,9 @@ export function RemediationConsole() {
               ) : (
                 <div className={styles.emptyState}>选择调优包后即可生成 agent task prompt。</div>
               )}
-            </section>
+                </section>
 
-            <section className={styles.viewerSection}>
+                <section className={styles.viewerSection}>
               <div className={styles.sectionHeader}>
                 <div>
                   <h3>Task Flow Draft</h3>
@@ -1060,9 +1089,12 @@ export function RemediationConsole() {
               ) : (
                 <div className={styles.emptyState}>选择调优包后即可生成 issue / PR draft。</div>
               )}
-            </section>
+                </section>
+              </>
+            ) : null}
 
-            <section className={styles.viewerSection}>
+            {currentStep === 2 ? (
+              <section className={styles.viewerSection}>
               <div className={styles.sectionHeader}>
                 <div>
                   <h3>Agent Runs</h3>
@@ -1338,9 +1370,11 @@ export function RemediationConsole() {
                   )}
                 </div>
               </div>
-            </section>
+              </section>
+            ) : null}
 
-            <section className={styles.viewerSection}>
+            {currentStep === 3 ? (
+              <section className={styles.viewerSection}>
               <div className={styles.sectionHeader}>
                 <div>
                   <h3>Validation Loop</h3>
@@ -1580,11 +1614,13 @@ export function RemediationConsole() {
                   )}
                 </div>
               </div>
-            </section>
+              </section>
+            ) : null}
           </section>
         </section>
-      </main>
-    </div>
+        </main>
+      </div>
+    </AppShell>
   );
 }
 

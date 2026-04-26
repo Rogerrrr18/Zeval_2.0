@@ -1,0 +1,135 @@
+.shell {
+  min-height: 100vh;
+  background: #fafafa;
+  color: #0b0b0b;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgb(255 255 255 / 0.92);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid rgb(0 0 0 / 0.06);
+}
+
+.headerInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  padding: 16px 28px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 13px;
+  color: #0b0b0b;
+  text-decoration: none;
+}
+
+.brandMark {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #0b0b0b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+
+.navLink {
+  position: relative;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4a4a4a;
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.navLink:hover {
+  color: #0b0b0b;
+  background: rgb(0 0 0 / 0.04);
+}
+
+.navLinkActive {
+  background: #0b0b0b;
+  color: #ffffff;
+}
+
+.navLinkActive:hover {
+  background: #1f1f1f;
+  color: #ffffff;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.homeLink {
+  font-size: 13px;
+  color: #4a4a4a;
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.homeLink:hover {
+  border-color: #0b0b0b;
+  color: #0b0b0b;
+}
+
+.subheader {
+  border-top: 1px solid rgb(0 0 0 / 0.04);
+  background: #ffffff;
+}
+
+.main {
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  padding: 32px 28px 64px;
+}
+
+@media (max-width: 720px) {
+  .headerInner {
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 14px 18px;
+  }
+  .nav {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+  .main {
+    padding: 24px 18px 48px;
+  }
+}

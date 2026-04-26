@@ -6,12 +6,15 @@
 .card {
   display: grid;
   gap: 12px;
-  padding: 16px;
-  border: 1px solid rgb(148 163 184 / 0.12);
-  border-radius: 22px;
-  background:
-    linear-gradient(180deg, rgb(8 14 27 / 0.96), rgb(4 9 18 / 0.96)),
-    radial-gradient(circle at top left, rgb(248 113 113 / 0.08), transparent 32%);
+  padding: 18px;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  border-radius: 18px;
+  background: #ffffff;
+  transition: border-color 160ms ease;
+}
+
+.card:hover {
+  border-color: rgb(0 0 0 / 0.16);
 }
 
 .header {
@@ -22,27 +25,28 @@
 
 .header h3 {
   margin: 0;
-  color: #f7fbff;
-  font-size: 15px;
+  color: #0b0b0b;
+  font-size: 14.5px;
+  font-weight: 600;
   line-height: 1.45;
 }
 
 .header p {
   margin: 6px 0 0;
-  color: #7f93ad;
+  color: #6b6b6b;
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.65;
 }
 
 .severityBadge {
   display: inline-flex;
   align-items: center;
   height: fit-content;
-  padding: 8px 10px;
+  padding: 5px 10px;
   border-radius: 999px;
-  background: rgb(239 68 68 / 0.16);
-  color: #fecaca;
-  font-size: 12px;
+  background: rgb(220 38 38 / 0.1);
+  color: #b91c1c;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   white-space: nowrap;
@@ -51,53 +55,59 @@
 .tagRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid rgb(251 113 133 / 0.18);
-  background: rgb(127 29 29 / 0.14);
-  color: #fecdd3;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  background: #fafafa;
+  color: #4a4a4a;
   font-size: 11px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
 }
 
 .evidenceBlock {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .evidenceBlock strong {
-  color: #dbe8fb;
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  color: #8a8a8a;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .evidenceBlock ul {
   margin: 0;
   padding-left: 16px;
-  color: #97a9c2;
-  font-size: 12px;
+  color: #4a4a4a;
+  font-size: 12.5px;
   line-height: 1.65;
 }
 
 .actionText {
   margin: 0;
-  color: #dbeafe;
-  font-size: 12px;
-  line-height: 1.7;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fafafa;
+  color: #0b0b0b;
+  font-size: 12.5px;
+  line-height: 1.65;
 }
 
 .empty {
-  padding: 18px;
-  border: 1px dashed rgb(71 85 105 / 0.7);
-  border-radius: 18px;
-  color: #93a5bf;
+  padding: 24px;
+  border: 1px dashed rgb(0 0 0 / 0.1);
+  border-radius: 16px;
+  background: #fafafa;
+  color: #8a8a8a;
   font-size: 13px;
-  line-height: 1.7;
+  line-height: 1.65;
+  text-align: center;
 }

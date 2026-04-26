@@ -1,18 +1,16 @@
 .page {
   position: relative;
-  min-height: 100vh;
-  padding: 28px 18px 40px;
-  background:
-    radial-gradient(circle at top left, rgb(34 211 238 / 0.12), transparent 28%),
-    linear-gradient(180deg, #050816 0%, #060b18 42%, #02050d 100%);
-  color: #e5eefc;
+  min-height: 100%;
+  padding: 0;
+  background: transparent;
+  color: #0b0b0b;
 }
 
 .main {
-  width: min(1280px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   display: grid;
-  gap: 18px;
+  gap: 22px;
 }
 
 .topBar {
@@ -20,56 +18,49 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
 }
 
 .titleBlock h1 {
-  margin: 0 0 8px;
-  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  margin: 0 0 6px;
+  font-size: clamp(1.6rem, 2.6vw, 2rem);
   letter-spacing: -0.03em;
+  color: #0b0b0b;
 }
 
 .titleBlock p {
   margin: 0;
-  color: #94a3b8;
+  color: #5b5b5b;
   max-width: 72ch;
-  line-height: 1.7;
-  font-size: 0.95rem;
+  line-height: 1.65;
+  font-size: 14px;
 }
 
 .navLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 12px;
-  border: 1px solid rgb(56 189 248 / 0.35);
-  color: #e0f2fe;
-  text-decoration: none;
-  font-size: 14px;
-  background: rgb(14 165 233 / 0.12);
-}
-
-.navLink:hover {
-  border-color: rgb(125 211 252 / 0.55);
+  display: none;
 }
 
 .panel {
-  border: 1px solid rgb(148 163 184 / 0.14);
+  border: 1px solid rgb(0 0 0 / 0.06);
   border-radius: 20px;
-  padding: 20px;
-  background: rgb(15 23 42 / 0.72);
+  padding: 22px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
 }
 
 .panel h2 {
   margin: 0 0 6px;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0b0b0b;
+  letter-spacing: -0.02em;
 }
 
 .panel > p {
   margin: 0 0 16px;
-  color: #94a3b8;
-  font-size: 0.9rem;
+  color: #5b5b5b;
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .formGrid {
@@ -81,8 +72,11 @@
 .label {
   display: grid;
   gap: 6px;
-  font-size: 13px;
-  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4a4a4a;
 }
 
 .input,
@@ -91,16 +85,25 @@
   width: 100%;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid rgb(71 85 105 / 0.85);
-  background: rgb(2 6 23 / 0.55);
-  color: #f1f5f9;
+  border: 1px solid rgb(0 0 0 / 0.1);
+  background: #ffffff;
+  color: #0b0b0b;
   font-size: 14px;
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: #0b0b0b;
 }
 
 .textarea {
   min-height: 72px;
   resize: vertical;
-  font-family: inherit;
 }
 
 .rowActions {
@@ -112,72 +115,102 @@
 
 .primaryButton {
   padding: 10px 18px;
-  border-radius: 12px;
-  border: none;
+  border-radius: 10px;
+  border: 1px solid #0b0b0b;
   cursor: pointer;
   font-weight: 600;
   font-size: 14px;
-  color: #0f172a;
-  background: linear-gradient(135deg, #38bdf8, #6366f1);
+  color: #ffffff;
+  background: #0b0b0b;
+  font-family: inherit;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: #1f1f1f;
+  transform: translateY(-1px);
 }
 
 .primaryButton:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .secondaryButton {
-  padding: 10px 16px;
-  border-radius: 12px;
-  border: 1px solid rgb(100 116 139 / 0.85);
-  background: transparent;
-  color: #e2e8f0;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid rgb(0 0 0 / 0.1);
+  background: #ffffff;
+  color: #0b0b0b;
   cursor: pointer;
   font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  border-color: #0b0b0b;
+  transform: translateY(-1px);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .error {
-  color: #fecaca;
-  font-size: 14px;
+  color: #b91c1c;
+  font-size: 13px;
   margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(220 38 38 / 0.18);
+  background: rgb(254 226 226 / 0.5);
+  border-radius: 10px;
 }
 
 .notice {
-  color: #bae6fd;
-  font-size: 14px;
+  color: #15803d;
+  font-size: 13px;
   margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(22 163 74 / 0.18);
+  background: rgb(220 252 231 / 0.5);
+  border-radius: 10px;
 }
 
 .metaList {
   margin: 0;
   padding-left: 18px;
-  color: #94a3b8;
-  font-size: 13px;
+  color: #6b6b6b;
+  font-size: 12.5px;
   line-height: 1.7;
 }
 
 .compareGrid {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .compareCard {
-  border: 1px solid rgb(51 65 85 / 0.6);
+  border: 1px solid rgb(0 0 0 / 0.06);
   border-radius: 16px;
   padding: 16px;
-  background: rgb(2 6 23 / 0.45);
+  background: #fafafa;
 }
 
 .compareCard h3 {
   margin: 0 0 6px;
-  font-size: 1rem;
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: #0b0b0b;
 }
 
 .compareCard > p {
   margin: 0 0 10px;
   font-size: 12px;
-  color: #94a3b8;
+  color: #6b6b6b;
 }
 
 .chartCanvas {
@@ -190,9 +223,54 @@
   max-height: 160px;
   overflow: auto;
   font-size: 12px;
-  color: #cbd5e1;
-  background: rgb(15 23 42 / 0.9);
+  color: #4a4a4a;
+  background: #fafafa;
   border-radius: 10px;
-  padding: 10px;
-  border: 1px solid rgb(51 65 85 / 0.5);
+  padding: 12px;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.stepIntro {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.stepIntro h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #0b0b0b;
+  letter-spacing: -0.02em;
+}
+
+.stepIntro p {
+  margin: 0;
+  color: #5b5b5b;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.howTo {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 12px 14px;
+  border-left: 2px solid #0b0b0b;
+  background: #fafafa;
+  border-radius: 0 10px 10px 0;
+  font-size: 12.5px;
+  color: #4a4a4a;
+  line-height: 1.7;
+}
+
+.howToTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a8a8a;
 }

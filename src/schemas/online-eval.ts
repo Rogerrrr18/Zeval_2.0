@@ -16,6 +16,7 @@ export const onlineReplayEvaluateBodySchema = z
         runId: z.string().min(1),
       })
       .optional(),
+    sampleBatchId: z.string().min(1).optional(),
     rawRows: z.array(rawChatlogRowSchema).optional(),
     /** 为空或未传时使用环境变量 `SILICONFLOW_CUSTOMER_API_URL` 或本机 4200 默认通道。 */
     replyApiBaseUrl: z.string().min(1).max(2000).optional(),
@@ -24,6 +25,6 @@ export const onlineReplayEvaluateBodySchema = z
     scenarioId: z.string().min(1).optional(),
     replyTimeoutMs: z.number().int().min(3000).max(120000).optional(),
   })
-  .refine((value) => Boolean(value.baselineRef) || (value.rawRows?.length ?? 0) > 0, {
-    message: "必须提供 baselineRef 或 rawRows。",
+  .refine((value) => Boolean(value.baselineRef) || Boolean(value.sampleBatchId) || (value.rawRows?.length ?? 0) > 0, {
+    message: "必须提供 baselineRef、sampleBatchId 或 rawRows。",
   });

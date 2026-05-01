@@ -12,6 +12,7 @@ import {
   TEMP_EVAL_SAMPLE_BADCASE_TARGET,
   TEMP_EVAL_SAMPLE_GOODCASE_TARGET,
 } from "@/eval-datasets/sample-defaults";
+import type { DatasetCaseRecord, SampleBatchRecord } from "@/eval-datasets/storage/types";
 import type { EvaluateResponse } from "@/types/pipeline";
 import styles from "./onlineEval.module.css";
 
@@ -29,7 +30,23 @@ type ReplayApiResponse = {
   replayedRowCount: number;
   baselineRunId?: string;
   baselineEvaluate?: EvaluateResponse;
+  sampleBatch?: SampleBatchRecord;
+  sampleCases?: DatasetCaseRecord[];
+  sampleBaselineSummary?: {
+    caseCount: number;
+    badcaseCount: number;
+    goodcaseCount: number;
+    avgBaselineCaseScore: number;
+    avgFailureSeverityScore: number;
+  };
   evaluate: EvaluateResponse;
+};
+
+type SampleBatchListResponse = {
+  sampleBatches: SampleBatchRecord[];
+  count: number;
+  error?: string;
+  detail?: string;
 };
 
 const STEPS: StepperStep[] = [
@@ -44,7 +61,10 @@ const STEPS: StepperStep[] = [
 export function OnlineEvalConsole() {
   const [customerId, setCustomerId] = useState("default");
   const [baselines, setBaselines] = useState<BaselineIndexRow[]>([]);
+  const [sampleBatches, setSampleBatches] = useState<SampleBatchRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
+  const [selectedSampleBatchId, setSelectedSampleBatchId] = useState("");
+  const [sourceMode, setSourceMode] = useState<"baseline" | "sampleBatch">("baseline");
   const [replyApiBaseUrl, setReplyApiBaseUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
@@ -80,9 +100,31 @@ export function OnlineEvalConsole() {
     }
   }, [customerId]);
 
+  const loadSampleBatches = useCallback(async () => {
+    setLoadingList(true);
+    setError("");
+    try {
+      const response = await fetch("/api/eval-datasets/sample-batches");
+      const data = (await response.json()) as SampleBatchListResponse;
+      if (!response.ok) {
+        throw new Error(data.detail ?? data.error ?? "加载 sample batch 失败");
+      }
+      setSampleBatches(data.sampleBatches ?? []);
+      setNotice(`已加载 ${data.count ?? 0} 个 sample batch。`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "加载 sample batch 失败");
+    } finally {
+      setLoadingList(false);
+    }
+  }, []);
+
   async function handleReplay() {
-    if (!selectedRunId) {
+    if (sourceMode === "baseline" && !selectedRunId) {
       setError("请先选择一条基线快照（含 rawRows）。");
+      return;
+    }
+    if (sourceMode === "sampleBatch" && !selectedSampleBatchId) {
+      setError("请先选择一个 sample batch。");
       return;
     }
     setLoading(true);
@@ -94,7 +136,8 @@ export function OnlineEvalConsole() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          baselineRef: { customerId, runId: selectedRunId },
+          baselineRef: sourceMode === "baseline" ? { customerId, runId: selectedRunId } : undefined,
+          sampleBatchId: sourceMode === "sampleBatch" ? selectedSampleBatchId : undefined,
           replyApiBaseUrl: replyApiBaseUrl.trim() || undefined,
           useLlm: true,
         }),
@@ -104,7 +147,9 @@ export function OnlineEvalConsole() {
         throw new Error(data.detail ?? data.error ?? "回放评估失败");
       }
       setReplayResult(data as ReplayApiResponse);
-      setNotice(`回放完成：已用回复端点 ${data.replyEndpoint} 重写 assistant，共 ${data.replayedRowCount} 行参与评估。`);
+      setNotice(
+        `回放完成：已用回复端点 ${data.replyEndpoint} 重写 assistant，共 ${data.replayedRowCount} 行参与评估。`,
+      );
       setCurrentStep(2);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "回放失败");
@@ -133,6 +178,11 @@ export function OnlineEvalConsole() {
         throw new Error(data.detail ?? data.error ?? "创建 sample batch 失败");
       }
       setSampleBatchJson(JSON.stringify(data, null, 2));
+      if (data.sampleBatch?.sampleBatchId) {
+        setSampleBatches((current) => [data.sampleBatch, ...current.filter((item) => item.sampleBatchId !== data.sampleBatch.sampleBatchId)]);
+        setSelectedSampleBatchId(data.sampleBatch.sampleBatchId);
+        setSourceMode("sampleBatch");
+      }
       setNotice("已生成临时评测集（不足 20 条亦会落盘并附 warnings）。");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "抽样失败");
@@ -143,7 +193,7 @@ export function OnlineEvalConsole() {
 
   const completedStep = (() => {
     if (replayResult) return 2;
-    if (selectedRunId && baselines.length > 0) return 1;
+    if ((sourceMode === "baseline" && selectedRunId) || (sourceMode === "sampleBatch" && selectedSampleBatchId)) return 1;
     return 0;
   })();
 
@@ -172,59 +222,117 @@ export function OnlineEvalConsole() {
           {currentStep === 0 ? (
             <>
               <section className={styles.stepIntro}>
-                <h2>选一个工作台基线</h2>
-                <p>基线是在「工作台 · 第 4 步」保存过的评估快照（含原始 rawRows）。我们会用它的对话回放新版本。</p>
+                <h2>选择回放样本来源</h2>
+                <p>可以选工作台保存的 baseline，也可以选案例池固定 sample batch。baseline 适合整批对比，sample batch 适合发布前回归。</p>
                 <div className={styles.howTo}>
                   <span className={styles.howToTitle}>怎么用</span>
-                  <span>① 输入 customerId（默认 default），点「刷新基线列表」。</span>
-                  <span>② 在下拉框里选一个 runId，点击「下一步」。</span>
+                  <span>① 选 baseline：输入 customerId 后刷新基线列表。</span>
+                  <span>② 选 sample batch：刷新评测集批次，或直接生成临时评测集。</span>
                 </div>
               </section>
 
               <section className={styles.panel}>
-                <h2>基线选择</h2>
-                <p>选择客户 + runId；如还没保存基线，先去「工作台 · 第 4 步」保存一份。</p>
-                <div className={styles.formGrid}>
-                  <label className={styles.label}>
-                    客户 ID（customerId）
-                    <input
-                      className={styles.input}
-                      value={customerId}
-                      onChange={(event) => setCustomerId(event.target.value)}
-                      placeholder="如 default、tenant_a"
-                    />
-                  </label>
-                  <label className={styles.label}>
-                    选择基线（runId）
-                    <select
-                      className={styles.select}
-                      value={selectedRunId}
-                      onChange={(event) => setSelectedRunId(event.target.value)}
-                      disabled={!baselines.length}
-                    >
-                      <option value="">— 请先加载列表 —</option>
-                      {baselines.map((row) => (
-                        <option key={row.fileName} value={row.runId}>
-                          {row.runId} · {row.createdAt}
-                          {row.label ? ` · ${row.label}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className={styles.rowActions} style={{ marginTop: 14 }}>
+                <h2>样本来源</h2>
+                <p>选择 baseline 或 sample batch；如还没保存基线，先去「工作台 · 第 4 步」保存一份。</p>
+                <div className={styles.modeSwitch}>
                   <button
                     type="button"
-                    className={styles.secondaryButton}
-                    disabled={loadingList}
-                    onClick={() => void loadBaselines()}
+                    className={`${styles.modeButton} ${sourceMode === "baseline" ? styles.modeButtonActive : ""}`}
+                    onClick={() => setSourceMode("baseline")}
                   >
-                    {loadingList ? "加载中…" : "刷新基线列表"}
+                    Baseline Replay
                   </button>
                   <button
                     type="button"
+                    className={`${styles.modeButton} ${sourceMode === "sampleBatch" ? styles.modeButtonActive : ""}`}
+                    onClick={() => setSourceMode("sampleBatch")}
+                  >
+                    Sample Batch Replay
+                  </button>
+                </div>
+                <div className={styles.formGrid}>
+                  {sourceMode === "baseline" ? (
+                    <>
+                      <label className={styles.label}>
+                        客户 ID（customerId）
+                        <input
+                          className={styles.input}
+                          value={customerId}
+                          onChange={(event) => setCustomerId(event.target.value)}
+                          placeholder="如 default、tenant_a"
+                        />
+                      </label>
+                      <label className={styles.label}>
+                        选择基线（runId）
+                        <select
+                          className={styles.select}
+                          value={selectedRunId}
+                          onChange={(event) => setSelectedRunId(event.target.value)}
+                          disabled={!baselines.length}
+                        >
+                          <option value="">— 请先加载列表 —</option>
+                          {baselines.map((row) => (
+                            <option key={row.fileName} value={row.runId}>
+                              {row.runId} · {row.createdAt}
+                              {row.label ? ` · ${row.label}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : (
+                    <label className={styles.label}>
+                      选择 Sample Batch
+                      <select
+                        className={styles.select}
+                        value={selectedSampleBatchId}
+                        onChange={(event) => setSelectedSampleBatchId(event.target.value)}
+                        disabled={!sampleBatches.length}
+                      >
+                        <option value="">— 请先加载 sample batch —</option>
+                        {sampleBatches.map((batch) => (
+                          <option key={batch.sampleBatchId} value={batch.sampleBatchId}>
+                            {batch.sampleBatchId} · cases={batch.caseIds.length} · {batch.createdAt}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <div className={styles.rowActions} style={{ marginTop: 14 }}>
+                  {sourceMode === "baseline" ? (
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={loadingList}
+                      onClick={() => void loadBaselines()}
+                    >
+                      {loadingList ? "加载中…" : "刷新基线列表"}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        disabled={loadingList}
+                        onClick={() => void loadSampleBatches()}
+                      >
+                        {loadingList ? "加载中…" : "刷新 Sample Batch"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        disabled={loading}
+                        onClick={() => void handleSampleBatch()}
+                      >
+                        生成临时评测集（约 20 条）
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
                     className={styles.primaryButton}
-                    disabled={!selectedRunId}
+                    disabled={sourceMode === "baseline" ? !selectedRunId : !selectedSampleBatchId}
                     onClick={() => goToStep(1)}
                   >
                     下一步：配置回放 →
@@ -253,7 +361,11 @@ export function OnlineEvalConsole() {
                 <h2>回复通道 · 回放执行</h2>
                 <p>
                   当前基线：
-                  <strong>{selectedRunId || "未选择"}</strong>
+                  <strong>
+                    {sourceMode === "baseline"
+                      ? selectedRunId || "未选择"
+                      : selectedSampleBatchId || "未选择"}
+                  </strong>
                 </p>
                 <div className={styles.formGrid}>
                   <label className={styles.label}>
@@ -277,22 +389,15 @@ export function OnlineEvalConsole() {
                   <button
                     type="button"
                     className={styles.primaryButton}
-                    disabled={loading || !selectedRunId}
+                    disabled={loading || (sourceMode === "baseline" ? !selectedRunId : !selectedSampleBatchId)}
                     onClick={() => void handleReplay()}
                   >
                     {loading ? "执行中…" : "执行回放评估"}
                   </button>
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    disabled={loading}
-                    onClick={() => void handleSampleBatch()}
-                  >
-                    生成临时评测集（约 20 条）
-                  </button>
                 </div>
                 <ul className={styles.metaList} style={{ marginTop: 14 }}>
-                  <li>系统会按基线 rawRows 的 user 轮逐条调用 Reply API，把 assistant 替换为新版本输出。</li>
+                  <li>系统会按选中样本的 user 轮逐条调用 Reply API，把 assistant 替换为新版本输出。</li>
+                  <li>Sample batch 模式会从案例池 transcript 还原 rawRows，适合固定回归集。</li>
                 </ul>
               </section>
 
@@ -312,8 +417,35 @@ export function OnlineEvalConsole() {
             <>
               <section className={styles.stepIntro}>
                 <h2>对比结果</h2>
-                <p>基线 vs 新版本的多指标对比、winRate 与图表。任何关键指标回退都应触发 fail。</p>
+                <p>基线或 sample batch vs 新版本的多指标对比、winRate 与图表。任何关键指标回退都应触发 fail。</p>
               </section>
+
+              {replayResult?.sampleBaselineSummary ? (
+                <section className={styles.panel}>
+                  <h2>Sample Batch 基线摘要</h2>
+                  <div className={styles.summaryGrid}>
+                    <div>
+                      <span>Cases</span>
+                      <strong>{replayResult.sampleBaselineSummary.caseCount}</strong>
+                    </div>
+                    <div>
+                      <span>Bad / Good</span>
+                      <strong>
+                        {replayResult.sampleBaselineSummary.badcaseCount}/
+                        {replayResult.sampleBaselineSummary.goodcaseCount}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Avg Baseline</span>
+                      <strong>{formatPercent(replayResult.sampleBaselineSummary.avgBaselineCaseScore)}</strong>
+                    </div>
+                    <div>
+                      <span>Avg Severity</span>
+                      <strong>{formatPercent(replayResult.sampleBaselineSummary.avgFailureSeverityScore)}</strong>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
 
               {replayResult?.baselineEvaluate ? (
                 <section className={styles.panel}>
@@ -354,4 +486,13 @@ export function OnlineEvalConsole() {
       </div>
     </AppShell>
   );
+}
+
+/**
+ * Format a normalized score as whole percent.
+ * @param value Normalized score.
+ * @returns Percent label.
+ */
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }

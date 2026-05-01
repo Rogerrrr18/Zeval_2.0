@@ -69,6 +69,41 @@
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.modeSwitch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: fit-content;
+  margin: 12px 0 16px;
+  padding: 4px;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.modeButton {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #4a4a4a;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modeButton:hover {
+  color: #0b0b0b;
+  background: rgb(0 0 0 / 0.04);
+}
+
+.modeButtonActive {
+  background: #ffffff;
+  color: #0b0b0b;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
 .label {
   display: grid;
   gap: 6px;
@@ -193,6 +228,33 @@
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summaryGrid div {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  border-radius: 14px;
+  background: #fafafa;
+}
+
+.summaryGrid span {
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.summaryGrid strong {
+  color: #0b0b0b;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .compareCard {
   border: 1px solid rgb(0 0 0 / 0.06);
   border-radius: 16px;
@@ -273,4 +335,10 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #8a8a8a;
+}
+
+@media (max-width: 760px) {
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
 }

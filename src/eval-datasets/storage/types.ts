@@ -10,6 +10,21 @@ import type { BadCaseFeatureSnapshot } from "@/badcase/types";
 export type CaseSetType = "goodcase" | "badcase";
 
 /**
+ * Lightweight human review verdict for auto-captured cases.
+ */
+export type DatasetCaseHumanVerdict = "valid_bad_case" | "false_positive" | "unclear";
+
+/**
+ * Review lifecycle for a dataset case.
+ */
+export type DatasetCaseReviewStatus =
+  | "auto_captured"
+  | "human_reviewed"
+  | "gold_candidate"
+  | "gold"
+  | "regression_active";
+
+/**
  * Minimal dataset case record stored in the evaluation dataset.
  */
 export type DatasetCaseRecord = {
@@ -27,6 +42,13 @@ export type DatasetCaseRecord = {
   title?: string;
   transcript?: string;
   suggestedAction?: string;
+  humanVerdict?: DatasetCaseHumanVerdict;
+  failureType?: string;
+  expectedBehavior?: string;
+  reviewNotes?: string;
+  reviewer?: string;
+  reviewedAt?: string;
+  reviewStatus?: DatasetCaseReviewStatus;
   scenarioId?: string;
   sourceRunId?: string;
   harvestedAt?: string;

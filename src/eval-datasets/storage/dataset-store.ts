@@ -25,6 +25,12 @@ export interface DatasetStore {
   createCase(record: DatasetCaseRecord): Promise<void>;
 
   /**
+   * Update one dataset case.
+   * @param record Full case record to persist.
+   */
+  updateCase(record: DatasetCaseRecord): Promise<void>;
+
+  /**
    * Save one baseline snapshot.
    * @param record Baseline snapshot to persist.
    */

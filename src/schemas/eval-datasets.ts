@@ -47,6 +47,20 @@ export const evalDatasetListCasesQuerySchema = z.object({
 });
 
 /**
+ * Request body for lightweight human review of one dataset case.
+ */
+export const evalDatasetUpdateCaseBodySchema = z.object({
+  humanVerdict: z.enum(["valid_bad_case", "false_positive", "unclear"]).optional(),
+  failureType: z.string().max(120).optional(),
+  expectedBehavior: z.string().max(4000).optional(),
+  reviewNotes: z.string().max(4000).optional(),
+  reviewer: z.string().max(120).optional(),
+  reviewStatus: z
+    .enum(["auto_captured", "human_reviewed", "gold_candidate", "gold", "regression_active"])
+    .optional(),
+});
+
+/**
  * Request body for creating a stratified sample batch.
  */
 export const evalDatasetCreateSampleBatchBodySchema = z.object({

@@ -12,7 +12,11 @@ import type {
   GoldSetReviewStatus,
 } from "@/calibration/types";
 import { AppShell, Stepper, type StepperStep } from "@/components/shell";
-import type { DatasetCaseRecord } from "@/eval-datasets/storage/types";
+import type {
+  DatasetCaseHumanVerdict,
+  DatasetCaseRecord,
+  DatasetCaseReviewStatus,
+} from "@/eval-datasets/storage/types";
 import styles from "./datasetConsole.module.css";
 
 type DatasetTab = "browse" | "gold";
@@ -64,6 +68,14 @@ const REVIEW_STATUS_OPTIONS: GoldSetReviewStatus[] = [
   "approved",
   "imported",
 ];
+const CASE_VERDICT_OPTIONS: DatasetCaseHumanVerdict[] = ["valid_bad_case", "false_positive", "unclear"];
+const CASE_REVIEW_STATUS_OPTIONS: DatasetCaseReviewStatus[] = [
+  "auto_captured",
+  "human_reviewed",
+  "gold_candidate",
+  "gold",
+  "regression_active",
+];
 
 /**
  * Render the dataset browsing console.
@@ -82,6 +94,7 @@ export function DatasetConsole() {
   const [goldSaving, setGoldSaving] = useState(false);
   const [goldImporting, setGoldImporting] = useState(false);
   const [promotingCaseId, setPromotingCaseId] = useState("");
+  const [savingReviewCaseId, setSavingReviewCaseId] = useState("");
   const [error, setError] = useState("");
   const [goldError, setGoldError] = useState("");
   const [notice, setNotice] = useState("");
@@ -174,6 +187,19 @@ export function DatasetConsole() {
     return [...counts.entries()]
       .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
       .slice(0, 6);
+  }, [cases]);
+
+  const caseById = useMemo(() => {
+    return new Map(cases.map((item) => [item.caseId, item]));
+  }, [cases]);
+
+  const reviewStats = useMemo(() => {
+    const stats = new Map<DatasetCaseReviewStatus, number>();
+    cases.forEach((item) => {
+      const status = item.reviewStatus ?? "auto_captured";
+      stats.set(status, (stats.get(status) ?? 0) + 1);
+    });
+    return stats;
   }, [cases]);
 
   const averageSeverity = useMemo(() => {
@@ -310,6 +336,35 @@ export function DatasetConsole() {
     }
   }, [loadGoldTasks]);
 
+  const updateCaseReview = useCallback(async (caseId: string, patch: Partial<DatasetCaseRecord>) => {
+    setSavingReviewCaseId(caseId);
+    setError("");
+    try {
+      const response = await fetch(`/api/eval-datasets/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          humanVerdict: patch.humanVerdict,
+          failureType: patch.failureType,
+          expectedBehavior: patch.expectedBehavior,
+          reviewNotes: patch.reviewNotes,
+          reviewer: patch.reviewer,
+          reviewStatus: patch.reviewStatus,
+        }),
+      });
+      const data = (await response.json()) as { case?: DatasetCaseRecord; error?: string; detail?: string };
+      if (!response.ok || !data.case) {
+        throw new Error(data.detail ?? data.error ?? "更新 case 审核状态失败");
+      }
+      setCases((current) => current.map((item) => (item.caseId === data.case?.caseId ? data.case : item)));
+      setNotice(`已更新 ${caseId} 的人工审核信息。`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "更新 case 审核状态失败");
+    } finally {
+      setSavingReviewCaseId("");
+    }
+  }, []);
+
   const stepIndex = activeTab === "browse" ? 0 : 1;
 
   return (
@@ -352,6 +407,11 @@ export function DatasetConsole() {
               <span>Gold Tasks</span>
               <strong>{goldStats?.totalTasks ?? goldTasks.length}</strong>
               <small>{goldStats?.approvedImportable ?? 0} 条可导入</small>
+            </article>
+            <article className={styles.heroCard}>
+              <span>Reviewed</span>
+              <strong>{reviewStats.get("human_reviewed") ?? 0}</strong>
+              <small>{reviewStats.get("auto_captured") ?? 0} 条待人审</small>
             </article>
           </section>
 
@@ -426,6 +486,11 @@ export function DatasetConsole() {
           {error ? <p className={styles.error}>{error}</p> : null}
           {notice ? <p className={styles.notice}>{notice}</p> : null}
           <div className={styles.tagStrip}>
+            {CASE_REVIEW_STATUS_OPTIONS.map((status) => (
+              <span className={styles.statusPill} key={status}>
+                {status}: {reviewStats.get(status) ?? 0}
+              </span>
+            ))}
             {topTags.map(([tag, count]) => (
               <span className={styles.tagPill} key={tag}>
                 {tag} · {count}
@@ -796,7 +861,48 @@ export function DatasetConsole() {
                   </summary>
                   <div className={styles.clusterItems}>
                     {cluster.items.map((item) => (
-                      <article className={styles.caseCard} key={item.caseId}>
+                      <CaseCardWithReview
+                        caseRecord={caseById.get(item.caseId)}
+                        item={item}
+                        key={item.caseId}
+                        promoting={promotingCaseId === item.caseId}
+                        savingReview={savingReviewCaseId === item.caseId}
+                        onPromote={promoteCaseToGoldSet}
+                        onUpdateReview={updateCaseReview}
+                      />
+                    ))}
+                  </div>
+                </details>
+              ))
+            ) : (
+              <div className={styles.empty}>当前没有可展示的 cluster。</div>
+            )}
+          </div>
+        </section>
+          ) : null}
+        </main>
+      </div>
+    </AppShell>
+  );
+}
+
+/**
+ * Render one bad case card with lightweight human review controls.
+ * @param props Case item, full record and action handlers.
+ * @returns Case card element.
+ */
+function CaseCardWithReview(props: {
+  item: BadCaseCluster["items"][number];
+  caseRecord?: DatasetCaseRecord;
+  promoting: boolean;
+  savingReview: boolean;
+  onPromote: (caseId: string) => Promise<void>;
+  onUpdateReview: (caseId: string, patch: Partial<DatasetCaseRecord>) => Promise<void>;
+}) {
+  const item = props.item;
+  const record = props.caseRecord;
+  return (
+                      <article className={styles.caseCard}>
                         <div className={styles.caseHeader}>
                           <div>
                             <h3>{item.title}</h3>
@@ -819,26 +925,87 @@ export function DatasetConsole() {
                           <button
                             className={styles.secondaryButton}
                             type="button"
-                            disabled={promotingCaseId === item.caseId}
-                            onClick={() => void promoteCaseToGoldSet(item.caseId)}
+                            disabled={props.promoting}
+                            onClick={() => void props.onPromote(item.caseId)}
                           >
-                            {promotingCaseId === item.caseId ? "生成中…" : "转为 Gold Candidate"}
+                            {props.promoting ? "生成中…" : "转为 Gold Candidate"}
                           </button>
+                        </div>
+                        <div className={styles.reviewBox}>
+                          <div className={styles.reviewHeader}>
+                            <strong>Human Review</strong>
+                            <span>{record?.reviewStatus ?? "auto_captured"}</span>
+                          </div>
+                          <div className={styles.reviewGrid}>
+                            <label className={styles.label}>
+                              Verdict
+                              <select
+                                className={styles.select}
+                                value={record?.humanVerdict ?? ""}
+                                onChange={(event) =>
+                                  void props.onUpdateReview(item.caseId, {
+                                    humanVerdict: event.target.value
+                                      ? (event.target.value as DatasetCaseHumanVerdict)
+                                      : undefined,
+                                  })
+                                }
+                              >
+                                <option value="">未确认</option>
+                                {CASE_VERDICT_OPTIONS.map((verdict) => (
+                                  <option key={verdict} value={verdict}>
+                                    {verdict}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className={styles.label}>
+                              Failure Type
+                              <input
+                                className={styles.input}
+                                defaultValue={record?.failureType ?? ""}
+                                disabled={props.savingReview}
+                                onBlur={(event) =>
+                                  void props.onUpdateReview(item.caseId, { failureType: event.target.value.trim() || undefined })
+                                }
+                                placeholder="tool_misuse / off_topic / bad_recovery"
+                              />
+                            </label>
+                            <label className={styles.label}>
+                              Review Status
+                              <select
+                                className={styles.select}
+                                value={record?.reviewStatus ?? "auto_captured"}
+                                onChange={(event) =>
+                                  void props.onUpdateReview(item.caseId, {
+                                    reviewStatus: event.target.value as DatasetCaseReviewStatus,
+                                  })
+                                }
+                              >
+                                {CASE_REVIEW_STATUS_OPTIONS.map((status) => (
+                                  <option key={status} value={status}>
+                                    {status}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <label className={styles.label}>
+                            Expected Behavior
+                            <textarea
+                              className={styles.textarea}
+                              defaultValue={record?.expectedBehavior ?? ""}
+                              disabled={props.savingReview}
+                              onBlur={(event) =>
+                                void props.onUpdateReview(item.caseId, {
+                                  expectedBehavior: event.target.value.trim() || undefined,
+                                })
+                              }
+                              placeholder="写清楚这个 case 里助手本应该怎么做，后续可升级为 gold set expected behavior。"
+                            />
+                          </label>
+                          {props.savingReview ? <span className={styles.savingHint}>保存审核信息中…</span> : null}
                         </div>
                         {item.transcript ? <pre className={styles.transcript}>{item.transcript}</pre> : null}
                       </article>
-                    ))}
-                  </div>
-                </details>
-              ))
-            ) : (
-              <div className={styles.empty}>当前没有可展示的 cluster。</div>
-            )}
-          </div>
-        </section>
-          ) : null}
-        </main>
-      </div>
-    </AppShell>
   );
 }

@@ -89,6 +89,7 @@ export async function harvestBadCasesToDataset(params: {
       harvestedAt: now,
       failureSeverityScore: asset.severityScore,
       featureSnapshot,
+      reviewStatus: "auto_captured",
       createdAt: now,
       updatedAt: now,
     };

@@ -32,6 +32,14 @@ export class DatabaseDatasetStore implements DatasetStore {
     await this.upsert(DATASET_CASE_TYPE, record.caseId, record, record.createdAt, record.updatedAt);
   }
 
+  async updateCase(record: DatasetCaseRecord): Promise<void> {
+    const existing = await this.getCaseById(record.caseId);
+    if (!existing) {
+      throw new Error(`未找到 dataset case: ${record.caseId}`);
+    }
+    await this.upsert(DATASET_CASE_TYPE, record.caseId, record, existing.createdAt, record.updatedAt);
+  }
+
   async saveBaseline(record: DatasetBaselineRecord): Promise<void> {
     const caseRecord = await this.getCaseById(record.caseId);
     if (!caseRecord) {

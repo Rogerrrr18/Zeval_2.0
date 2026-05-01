@@ -44,6 +44,17 @@ export class FileSystemDatasetStore implements DatasetStore {
   /**
    * @inheritdoc
    */
+  async updateCase(record: DatasetCaseRecord): Promise<void> {
+    const existing = await this.getCaseById(record.caseId);
+    if (!existing) {
+      throw new Error(`未找到 dataset case: ${record.caseId}`);
+    }
+    await writeJsonFile(path.join(this.getCaseDirectory(existing.caseSetType, record.caseId), "case.json"), record);
+  }
+
+  /**
+   * @inheritdoc
+   */
   async saveBaseline(record: DatasetBaselineRecord): Promise<void> {
     const caseRecord = await this.getCaseById(record.caseId);
     if (!caseRecord) {

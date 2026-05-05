@@ -8,6 +8,8 @@ import type { FieldSource, NormalizedChatlogRow, TopicSegment } from "@/types/pi
 
 const LONG_GAP_REVIEW_SEC = 180;
 const EXPLICIT_CONTINUATION_PATTERN = /(继续|接着|上次|还记得|再来一次|今晚继续|刚才|那个故事)/;
+const TOPIC_SWITCH_PATTERN = /(这个|上面|刚才|还有|另外|再问|换个|ok\s*那|OK\s*那)/;
+const NEGATIVE_TOPIC_BREAK_PATTERN = /(错了|不对|不是|不行|重来|换一个|没回答|没解决|答非所问)/;
 
 type RuleTopicCandidate = {
   label: string;
@@ -55,6 +57,20 @@ export async function buildTopicSegments(
   }
 
   return segments;
+}
+
+/**
+ * Segment rows by topic using rules only.
+ *
+ * @param rows Normalized rows.
+ * @returns Topic segments without LLM continuity review.
+ */
+export function segmentByTopic(rows: NormalizedChatlogRow[]): TopicSegment[] {
+  const grouped = new Map<string, NormalizedChatlogRow[]>();
+  rows.forEach((row) => {
+    grouped.set(row.sessionId, [...(grouped.get(row.sessionId) ?? []), row]);
+  });
+  return [...grouped.entries()].flatMap(([sessionId, sessionRows]) => buildSessionTopicSegmentsByRule(sessionId, sessionRows));
 }
 
 /**
@@ -122,6 +138,32 @@ async function buildSessionTopicSegments(
   segments.push(activeSegment);
 
   return segments.map((segment) => finalizeTopicSegment(segment));
+}
+
+function buildSessionTopicSegmentsByRule(sessionId: string, rows: NormalizedChatlogRow[]): TopicSegment[] {
+  if (rows.length === 0) {
+    return [];
+  }
+  const segments: MutableTopicSegment[] = [];
+  let activeSegment = createMutableSegment(sessionId, 1, rows[0], "rule");
+  for (let index = 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    const shouldSplit = shouldSplitByRule(
+      summarizeSegmentCandidate(activeSegment.rows),
+      inferRuleTopicCandidate(row.content),
+      row,
+    );
+    if (shouldSplit) {
+      activeSegment.sources.push("rule");
+      segments.push(activeSegment);
+      activeSegment = createMutableSegment(sessionId, segments.length + 1, row, "rule");
+      continue;
+    }
+    activeSegment.rows.push(row);
+    activeSegment.sources.push("rule");
+  }
+  segments.push(activeSegment);
+  return segments.map(finalizeTopicSegment);
 }
 
 /**
@@ -203,6 +245,9 @@ function shouldSplitByRule(
   row: NormalizedChatlogRow,
 ): boolean {
   const { content, role } = row;
+  if (role === "user" && (TOPIC_SWITCH_PATTERN.test(content) || NEGATIVE_TOPIC_BREAK_PATTERN.test(content))) {
+    return true;
+  }
   if (previousCandidate.domain === currentCandidate.domain) {
     return false;
   }

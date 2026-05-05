@@ -3,6 +3,7 @@
  */
 
 import { computeNormalizedTranscriptHash } from "@/eval-datasets/case-transcript-hash";
+import { harvestBadCases, type BadCaseSignal, type HarvestedBadCase } from "@/pipeline/badCaseHarvest";
 import type {
   BadCaseAsset,
   BadCaseTag,
@@ -32,13 +33,23 @@ export function buildBadCaseAssets(
     scenarioId?: string;
   },
 ): BadCaseAsset[] {
-  const grouped = groupRowsBySession(rows);
+  const grouped = groupRowsByTopic(rows);
+  const harvested = new Map(
+    harvestBadCases(rows, _objectiveMetrics, subjectiveMetrics.signals).map((item) => [item.topicId, item]),
+  );
   const goalMap = new Map(subjectiveMetrics.goalCompletions.map((item) => [item.sessionId, item]));
   const recoveryMap = new Map(subjectiveMetrics.recoveryTraces.map((item) => [item.sessionId, item]));
 
   const assets = [...grouped.entries()]
-    .map(([sessionId, sessionRows]) =>
-      buildSessionBadCase(sessionId, sessionRows, goalMap.get(sessionId), recoveryMap.get(sessionId), options),
+    .map(([topicId, topicRows]) =>
+      buildTopicBadCase(
+        topicId,
+        topicRows,
+        goalMap.get(topicRows[0]?.sessionId ?? ""),
+        recoveryMap.get(topicRows[0]?.sessionId ?? ""),
+        harvested.get(topicId),
+        options,
+      ),
     )
     .filter((item): item is BadCaseAsset => item !== null)
     .sort((left, right) => right.severityScore - left.severityScore);
@@ -56,11 +67,12 @@ export function buildBadCaseAssets(
  * @param options Build options.
  * @returns Bad case asset or `null`.
  */
-function buildSessionBadCase(
-  sessionId: string,
+function buildTopicBadCase(
+  topicId: string,
   rows: EnrichedChatlogRow[],
   goalCompletion: SubjectiveMetrics["goalCompletions"][number] | undefined,
   recoveryTrace: RecoveryTraceResult | undefined,
+  harvested: HarvestedBadCase | undefined,
   options: {
     runId: string;
     scenarioId?: string;
@@ -68,7 +80,18 @@ function buildSessionBadCase(
 ): BadCaseAsset | null {
   const tags = new Set<BadCaseTag>();
   const evidenceRows: BadCaseEvidenceRow[] = [];
-  let severityScore = 0;
+  let severityScore = harvested?.severity ?? 0;
+  const autoSignals: BadCaseSignal[] = harvested?.signals ?? [];
+  if (autoSignals.some((signal) => signal.kind === "negative_keyword")) {
+    tags.add("understanding_barrier");
+  }
+  if (autoSignals.some((signal) => signal.kind === "metric" && signal.metric === "responseGap")) {
+    tags.add("long_response_gap");
+  }
+  if (autoSignals.some((signal) => signal.kind === "metric" && signal.metric === "topicSwitch")) {
+    tags.add("off_topic_shift");
+  }
+  evidenceRows.push(...materializeAutoSignalEvidence(autoSignals, rows));
 
   if (goalCompletion?.status === "failed") {
     tags.add("goal_failed");
@@ -150,18 +173,24 @@ function buildSessionBadCase(
   const severity = clamp01(severityScore);
 
   return {
-    caseKey: `${sessionId}_${normalizedTranscriptHash.slice(0, 10)}`,
-    sessionId,
+    caseKey: `${topicId}_${normalizedTranscriptHash.slice(0, 10)}`,
+    sessionId: primaryRow.sessionId,
     title: buildBadCaseTitle(orderedTags, primaryRow.turnIndex, primaryRow.content),
     severityScore: severity,
     normalizedTranscriptHash,
     duplicateGroupKey: [options.scenarioId ?? "generic", primaryRow.topic, orderedTags.join("+")].join(":"),
-    topicSegmentId: primaryRow.topicSegmentId,
+    topicSegmentId: topicId,
+    topicIndex: primaryRow.topicSegmentIndex,
+    topicRange: {
+      startTurn: primaryRow.topicStartTurn,
+      endTurn: primaryRow.topicEndTurn,
+    },
     topicLabel: primaryRow.topic,
     topicSummary: primaryRow.topicSummary,
     tags: orderedTags,
     transcript,
     evidence: orderedEvidence,
+    autoSignals,
     suggestedAction: buildSuggestedAction(orderedTags),
     sourceRunId: options.runId,
   };
@@ -278,15 +307,31 @@ function findOffTopicShiftRows(rows: EnrichedChatlogRow[]): BadCaseEvidenceRow[]
  * @param rows Enriched rows.
  * @returns Session map.
  */
-function groupRowsBySession(rows: EnrichedChatlogRow[]): Map<string, EnrichedChatlogRow[]> {
+function groupRowsByTopic(rows: EnrichedChatlogRow[]): Map<string, EnrichedChatlogRow[]> {
   const grouped = new Map<string, EnrichedChatlogRow[]>();
   rows.forEach((row) => {
-    if (!grouped.has(row.sessionId)) {
-      grouped.set(row.sessionId, []);
-    }
-    grouped.get(row.sessionId)?.push(row);
+    grouped.set(row.topicSegmentId, [...(grouped.get(row.topicSegmentId) ?? []), row]);
   });
   return grouped;
+}
+
+function materializeAutoSignalEvidence(signals: BadCaseSignal[], rows: EnrichedChatlogRow[]): BadCaseEvidenceRow[] {
+  return signals
+    .map((signal) => {
+      if (signal.kind === "negative_keyword") {
+        return rows.find((row) => row.turnIndex === signal.turnIndex);
+      }
+      if (signal.kind === "metric" && signal.metric === "responseGap") {
+        return rows.find((row) => row.responseGapSec === signal.value);
+      }
+      return rows.find((row) => row.role === "user");
+    })
+    .filter((row): row is EnrichedChatlogRow => Boolean(row))
+    .map((row) => ({
+      turnIndex: row.turnIndex,
+      role: row.role,
+      content: row.content,
+    }));
 }
 
 /**

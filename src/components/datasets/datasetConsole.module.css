@@ -671,3 +671,72 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Auto signal box on each bad case card */
+.signalBox {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.04);
+  border-left: 3px solid rgba(37, 99, 235, 0.5);
+  border-radius: 6px;
+}
+
+.signalBox strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #475569;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.signalBox ul {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.signalBox li {
+  font-size: 12.5px;
+  color: #1f2937;
+  line-height: 1.45;
+}
+
+/* Override row: 标记错判 */
+.overrideRow {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(15, 23, 42, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.overrideForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.overrideForm .input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.overrideBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  color: #166534;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}

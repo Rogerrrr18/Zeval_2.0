@@ -32,6 +32,8 @@ export type DatasetCaseRecord = {
   caseSetType: CaseSetType;
   sessionId: string;
   topicSegmentId: string;
+  topicIndex?: number;
+  topicRange?: { startTurn: number; endTurn: number };
   topicLabel: string;
   topicSummary: string;
   normalizedTranscriptHash: string;
@@ -46,6 +48,12 @@ export type DatasetCaseRecord = {
   failureType?: string;
   expectedBehavior?: string;
   reviewNotes?: string;
+  manualOverrides?: Array<{
+    type: "false_positive";
+    note?: string;
+    createdAt: string;
+  }>;
+  autoSignals?: Array<Record<string, unknown>>;
   reviewer?: string;
   reviewedAt?: string;
   reviewStatus?: DatasetCaseReviewStatus;

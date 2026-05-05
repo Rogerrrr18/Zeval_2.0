@@ -62,6 +62,8 @@ const badCaseAssetSchema = z.object({
   normalizedTranscriptHash: z.string().min(1),
   duplicateGroupKey: z.string().min(1),
   topicSegmentId: z.string().min(1),
+  topicIndex: z.number().int().optional(),
+  topicRange: z.object({ startTurn: z.number().int(), endTurn: z.number().int() }).optional(),
   topicLabel: z.string().min(1),
   topicSummary: z.string(),
   tags: z.array(z.string()).default([]),
@@ -73,6 +75,7 @@ const badCaseAssetSchema = z.object({
       content: z.string(),
     }),
   ),
+  autoSignals: z.array(z.record(z.string(), z.unknown())).optional(),
   suggestedAction: z.string(),
   sourceRunId: z.string().min(1),
 });

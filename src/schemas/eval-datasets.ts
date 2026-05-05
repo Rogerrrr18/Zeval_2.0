@@ -54,6 +54,9 @@ export const evalDatasetUpdateCaseBodySchema = z.object({
   failureType: z.string().max(120).optional(),
   expectedBehavior: z.string().max(4000).optional(),
   reviewNotes: z.string().max(4000).optional(),
+  manualOverrides: z
+    .array(z.object({ type: z.literal("false_positive"), note: z.string().max(4000).optional(), createdAt: z.string() }))
+    .optional(),
   reviewer: z.string().max(120).optional(),
   reviewStatus: z
     .enum(["auto_captured", "human_reviewed", "gold_candidate", "gold", "regression_active"])
@@ -99,6 +102,8 @@ export const evalDatasetHarvestBadcasesBodySchema = z.object({
         normalizedTranscriptHash: z.string().min(1),
         duplicateGroupKey: z.string().min(1),
         topicSegmentId: z.string().min(1),
+        topicIndex: z.number().int().optional(),
+        topicRange: z.object({ startTurn: z.number().int(), endTurn: z.number().int() }).optional(),
         topicLabel: z.string().min(1),
         topicSummary: z.string(),
         tags: z.array(z.string()).default([]),
@@ -110,6 +115,7 @@ export const evalDatasetHarvestBadcasesBodySchema = z.object({
             content: z.string(),
           }),
         ),
+        autoSignals: z.array(z.record(z.string(), z.unknown())).optional(),
         suggestedAction: z.string(),
         sourceRunId: z.string().min(1),
       }),

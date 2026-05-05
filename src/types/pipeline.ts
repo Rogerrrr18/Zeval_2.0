@@ -337,6 +337,8 @@ export type BadCaseAsset = {
   normalizedTranscriptHash: string;
   duplicateGroupKey: string;
   topicSegmentId: string;
+  topicIndex?: number;
+  topicRange?: { startTurn: number; endTurn: number };
   topicLabel: string;
   topicSummary: string;
   tags: BadCaseTag[];
@@ -346,6 +348,11 @@ export type BadCaseAsset = {
     role: ChatRole;
     content: string;
   }>;
+  autoSignals?: Array<
+    | { kind: "negative_keyword"; keyword: string; turnIndex: number }
+    | { kind: "metric"; metric: "responseGap" | "shortTurns" | "topicSwitch"; value: number }
+    | { kind: "implicit_signal"; signalId: string }
+  >;
   suggestedAction: string;
   sourceRunId: string;
 };

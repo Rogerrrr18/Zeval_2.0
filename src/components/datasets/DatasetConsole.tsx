@@ -1,30 +1,32 @@
 /**
  * @fileoverview Dataset and bad case cluster browsing workspace.
+ *
+ * 案例池现在是「只读 + 错判覆盖」形态：
+ *   - 所有 bad case 来自 pipeline 自动判定，不需要人工标注主流程
+ *   - 用户唯一可执行的人工动作是「标记错判（false positive）」，落到独立的 manualOverrides
+ *     字段，不影响主自动流，不进入 gold set 流程
+ *   - Gold Set v2 标注流程在产品 UI 中已下线，仅保留底层数据 / API 给 calibration 使用
  */
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BadCaseCluster } from "@/badcase/types";
+import { AppShell } from "@/components/shell";
 import type {
-  GoldSetAnnotationTaskRecord,
-  GoldSetLabelDraftRecord,
-  GoldSetReviewStatus,
-} from "@/calibration/types";
-import { AppShell, Stepper, type StepperStep } from "@/components/shell";
-import type {
-  DatasetCaseHumanVerdict,
   DatasetCaseRecord,
   DatasetCaseReviewStatus,
 } from "@/eval-datasets/storage/types";
 import styles from "./datasetConsole.module.css";
 
-type DatasetTab = "browse" | "gold";
+const DATASET_SNAPSHOT_KEY = "zeval.datasets.snapshot.v1";
 
-const STEPS: StepperStep[] = [
-  { key: "browse", title: "1 · 浏览案例池", hint: "已沉淀 bad case + cluster" },
-  { key: "gold", title: "2 · 标注 Gold Set", hint: "审核 → 导入 labels.jsonl" },
-];
+type DatasetConsoleSnapshot = {
+  clusters: BadCaseCluster[];
+  cases: DatasetCaseRecord[];
+  selectedScenarioId: string;
+  notice: string;
+};
 
 type ClusterResponse = {
   clusters: BadCaseCluster[];
@@ -37,38 +39,6 @@ type CaseListResponse = {
   count: number;
 };
 
-type GoldSetDraftValidation = {
-  caseId: string;
-  taskId?: string;
-  reviewStatus?: GoldSetReviewStatus;
-  importable: boolean;
-  errors: string[];
-  warnings: string[];
-};
-
-type GoldSetTasksResponse = {
-  tasks: GoldSetAnnotationTaskRecord[];
-  drafts: GoldSetLabelDraftRecord[];
-  validations: GoldSetDraftValidation[];
-  stats: {
-    totalTasks: number;
-    approvedImportable: number;
-    blockedApproved: number;
-    statusCounts: Record<string, number>;
-  };
-  error?: string;
-  detail?: string;
-};
-
-const GOLD_SET_VERSION = "v2";
-const REVIEW_STATUS_OPTIONS: GoldSetReviewStatus[] = [
-  "draft",
-  "ready_for_review",
-  "changes_requested",
-  "approved",
-  "imported",
-];
-const CASE_VERDICT_OPTIONS: DatasetCaseHumanVerdict[] = ["valid_bad_case", "false_positive", "unclear"];
 const CASE_REVIEW_STATUS_OPTIONS: DatasetCaseReviewStatus[] = [
   "auto_captured",
   "human_reviewed",
@@ -82,25 +52,43 @@ const CASE_REVIEW_STATUS_OPTIONS: DatasetCaseReviewStatus[] = [
  * @returns Dataset page content.
  */
 export function DatasetConsole() {
+  const snapshotHydratedRef = useRef(false);
   const [clusters, setClusters] = useState<BadCaseCluster[]>([]);
   const [cases, setCases] = useState<DatasetCaseRecord[]>([]);
-  const [goldTasks, setGoldTasks] = useState<GoldSetAnnotationTaskRecord[]>([]);
-  const [goldDrafts, setGoldDrafts] = useState<GoldSetLabelDraftRecord[]>([]);
-  const [goldValidations, setGoldValidations] = useState<GoldSetDraftValidation[]>([]);
-  const [goldStats, setGoldStats] = useState<GoldSetTasksResponse["stats"] | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState("");
   const [loading, setLoading] = useState(false);
-  const [goldLoading, setGoldLoading] = useState(false);
-  const [goldSaving, setGoldSaving] = useState(false);
-  const [goldImporting, setGoldImporting] = useState(false);
-  const [promotingCaseId, setPromotingCaseId] = useState("");
-  const [savingReviewCaseId, setSavingReviewCaseId] = useState("");
+  const [overrideCaseId, setOverrideCaseId] = useState("");
   const [error, setError] = useState("");
-  const [goldError, setGoldError] = useState("");
   const [notice, setNotice] = useState("");
-  const [goldNotice, setGoldNotice] = useState("");
   const [selectedScenarioId, setSelectedScenarioId] = useState("");
-  const [activeTab, setActiveTab] = useState<DatasetTab>("browse");
+
+  // Hydrate persisted snapshot.
+  useEffect(() => {
+    const raw = window.localStorage.getItem(DATASET_SNAPSHOT_KEY);
+    if (!raw) {
+      snapshotHydratedRef.current = true;
+      return;
+    }
+    try {
+      const snapshot = JSON.parse(raw) as DatasetConsoleSnapshot;
+      setClusters(snapshot.clusters ?? []);
+      setCases(snapshot.cases ?? []);
+      setSelectedScenarioId(snapshot.selectedScenarioId ?? "");
+      setNotice(snapshot.notice ?? "");
+    } catch {
+      window.localStorage.removeItem(DATASET_SNAPSHOT_KEY);
+    } finally {
+      snapshotHydratedRef.current = true;
+    }
+  }, []);
+
+  // Persist snapshot.
+  useEffect(() => {
+    if (!snapshotHydratedRef.current) {
+      return;
+    }
+    const snapshot: DatasetConsoleSnapshot = { clusters, cases, selectedScenarioId, notice };
+    window.localStorage.setItem(DATASET_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  }, [cases, clusters, notice, selectedScenarioId]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -131,35 +119,9 @@ export function DatasetConsole() {
     }
   }, []);
 
-  const loadGoldTasks = useCallback(async () => {
-    setGoldLoading(true);
-    setGoldError("");
-    try {
-      const response = await fetch(`/api/calibration/gold-sets/${GOLD_SET_VERSION}/annotation-tasks`);
-      const data = (await response.json()) as GoldSetTasksResponse;
-      if (!response.ok) {
-        throw new Error(data.detail ?? data.error ?? "加载 gold set 标注任务失败");
-      }
-      setGoldTasks(data.tasks ?? []);
-      setGoldDrafts(data.drafts ?? []);
-      setGoldValidations(data.validations ?? []);
-      setGoldStats(data.stats ?? null);
-      setGoldNotice(`已加载 ${data.tasks?.length ?? 0} 个 ${GOLD_SET_VERSION} 标注任务。`);
-      setSelectedTaskId((current) => current || data.tasks?.[0]?.taskId || "");
-    } catch (requestError) {
-      setGoldError(requestError instanceof Error ? requestError.message : "加载 gold set 标注任务失败");
-    } finally {
-      setGoldLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void loadData();
   }, [loadData]);
-
-  useEffect(() => {
-    void loadGoldTasks();
-  }, [loadGoldTasks]);
 
   const scenarioOptions = useMemo(
     () =>
@@ -211,179 +173,54 @@ export function DatasetConsole() {
     ).toFixed(2);
   }, [cases]);
 
-  const selectedTask = useMemo(
-    () => goldTasks.find((item) => item.taskId === selectedTaskId) ?? goldTasks[0] ?? null,
-    [goldTasks, selectedTaskId],
-  );
-
-  const selectedDraft = useMemo(
-    () => goldDrafts.find((item) => item.taskId === selectedTask?.taskId) ?? null,
-    [goldDrafts, selectedTask],
-  );
-
-  const selectedValidation = useMemo(
-    () => goldValidations.find((item) => item.taskId === selectedTask?.taskId) ?? null,
-    [goldValidations, selectedTask],
-  );
-
-  const statusCounts = goldStats?.statusCounts ?? {};
-
-  const updateSelectedDraft = useCallback((updater: (draft: GoldSetLabelDraftRecord) => GoldSetLabelDraftRecord) => {
-    setGoldDrafts((current) =>
-      current.map((item) => {
-        if (item.taskId !== selectedTask?.taskId) {
-          return item;
-        }
-        return updater(item);
-      }),
-    );
-  }, [selectedTask]);
-
-  const saveSelectedDraft = useCallback(async () => {
-    if (!selectedDraft) {
-      return;
-    }
-    setGoldSaving(true);
-    setGoldError("");
-    try {
-      const response = await fetch(
-        `/api/calibration/gold-sets/${selectedDraft.goldSetVersion}/label-drafts/${encodeURIComponent(selectedDraft.taskId)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(selectedDraft),
-        },
-      );
-      const data = (await response.json()) as {
-        draft?: GoldSetLabelDraftRecord;
-        validation?: GoldSetDraftValidation;
-        error?: string;
-        detail?: string;
-      };
-      if (!response.ok || !data.draft || !data.validation) {
-        throw new Error(data.detail ?? data.error ?? "保存 label draft 失败");
-      }
-      const savedDraft = data.draft;
-      const savedValidation = data.validation;
-      setGoldDrafts((current) => current.map((item) => (item.taskId === savedDraft.taskId ? savedDraft : item)));
-      setGoldValidations((current) =>
-        current.map((item) => (item.taskId === savedValidation.taskId ? savedValidation : item)),
-      );
-      setGoldNotice(`已保存 ${savedDraft.caseId} 的 label draft。`);
-      await loadGoldTasks();
-    } catch (requestError) {
-      setGoldError(requestError instanceof Error ? requestError.message : "保存 label draft 失败");
-    } finally {
-      setGoldSaving(false);
-    }
-  }, [loadGoldTasks, selectedDraft]);
-
-  const importApprovedLabels = useCallback(async () => {
-    setGoldImporting(true);
-    setGoldError("");
-    try {
-      const response = await fetch(`/api/calibration/gold-sets/${GOLD_SET_VERSION}/annotation-tasks`, {
-        method: "POST",
-      });
-      const data = (await response.json()) as {
-        result?: { importedCount: number; skippedCount: number; failedCount: number };
-        error?: string;
-        detail?: string;
-      };
-      if (!response.ok || !data.result) {
-        throw new Error(data.detail ?? data.error ?? "导入 approved labels 失败");
-      }
-      setGoldNotice(
-        `导入完成：imported=${data.result.importedCount}，skipped=${data.result.skippedCount}，failed=${data.result.failedCount}。`,
-      );
-      await loadGoldTasks();
-    } catch (requestError) {
-      setGoldError(requestError instanceof Error ? requestError.message : "导入 approved labels 失败");
-    } finally {
-      setGoldImporting(false);
-    }
-  }, [loadGoldTasks]);
-
-  const promoteCaseToGoldSet = useCallback(async (caseId: string) => {
-    setPromotingCaseId(caseId);
-    setGoldError("");
-    try {
-      const response = await fetch(`/api/calibration/gold-sets/${GOLD_SET_VERSION}/candidates`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caseId, reviewer: "reviewer" }),
-      });
-      const data = (await response.json()) as {
-        task?: GoldSetAnnotationTaskRecord;
-        alreadyExists?: boolean;
-        error?: string;
-        detail?: string;
-      };
-      if (!response.ok || !data.task) {
-        throw new Error(data.detail ?? data.error ?? "生成 gold candidate 失败");
-      }
-      setGoldNotice(
-        data.alreadyExists
-          ? `${caseId} 已存在于 ${GOLD_SET_VERSION}：${data.task.taskId}`
-          : `已生成 gold candidate：${data.task.taskId}`,
-      );
-      await loadGoldTasks();
-      setSelectedTaskId(data.task.taskId);
-    } catch (requestError) {
-      setGoldError(requestError instanceof Error ? requestError.message : "生成 gold candidate 失败");
-    } finally {
-      setPromotingCaseId("");
-    }
-  }, [loadGoldTasks]);
-
-  const updateCaseReview = useCallback(async (caseId: string, patch: Partial<DatasetCaseRecord>) => {
-    setSavingReviewCaseId(caseId);
+  /**
+   * Append a `false_positive` manual override on one bad case. This does NOT
+   * change the main pipeline review flow — it only records that a human flagged
+   * this auto-captured case as misjudged.
+   *
+   * @param caseId Dataset case id.
+   * @param note Optional human-provided note.
+   */
+  const markFalsePositive = useCallback(async (caseId: string, note?: string) => {
+    setOverrideCaseId(caseId);
     setError("");
     try {
+      const target = caseById.get(caseId);
+      const existingOverrides = target?.manualOverrides ?? [];
+      const nextOverrides = [
+        ...existingOverrides,
+        {
+          type: "false_positive" as const,
+          note: note?.trim() || undefined,
+          createdAt: new Date().toISOString(),
+        },
+      ];
       const response = await fetch(`/api/eval-datasets/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          humanVerdict: patch.humanVerdict,
-          failureType: patch.failureType,
-          expectedBehavior: patch.expectedBehavior,
-          reviewNotes: patch.reviewNotes,
-          reviewer: patch.reviewer,
-          reviewStatus: patch.reviewStatus,
-        }),
+        body: JSON.stringify({ manualOverrides: nextOverrides }),
       });
       const data = (await response.json()) as { case?: DatasetCaseRecord; error?: string; detail?: string };
       if (!response.ok || !data.case) {
-        throw new Error(data.detail ?? data.error ?? "更新 case 审核状态失败");
+        throw new Error(data.detail ?? data.error ?? "标记错判失败");
       }
       setCases((current) => current.map((item) => (item.caseId === data.case?.caseId ? data.case : item)));
-      setNotice(`已更新 ${caseId} 的人工审核信息。`);
+      setNotice(`已为 ${caseId} 添加错判标记。`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "更新 case 审核状态失败");
+      setError(requestError instanceof Error ? requestError.message : "标记错判失败");
     } finally {
-      setSavingReviewCaseId("");
+      setOverrideCaseId("");
     }
-  }, []);
-
-  const stepIndex = activeTab === "browse" ? 0 : 1;
+  }, [caseById]);
 
   return (
-    <AppShell
-      subheader={
-        <Stepper
-          steps={STEPS}
-          current={stepIndex}
-          completed={1}
-          onSelect={(index) => setActiveTab(index === 0 ? "browse" : "gold")}
-        />
-      }
-    >
+    <AppShell>
       <div className={styles.page}>
         <main className={styles.main}>
           <header className={styles.topBar}>
             <div className={styles.titleBlock}>
               <h1>Bad Case 案例池</h1>
-              <p>浏览沉淀的失败案例与 cluster；把高价值 case 推进 Gold Set 标注流，为 judge 校准提供 ground truth。</p>
+              <p>topic 粒度自动沉淀的失败案例。每条 case 展示规则命中信号 + 自动判定原因，无需人工标注。</p>
             </div>
           </header>
 
@@ -396,7 +233,7 @@ export function DatasetConsole() {
             <article className={styles.heroCard}>
               <span>Total Clusters</span>
               <strong>{clusters.length}</strong>
-              <small>按轻量相似度聚合后的 cluster 数</small>
+              <small>按轻量相似度聚合</small>
             </article>
             <article className={styles.heroCard}>
               <span>Avg Severity</span>
@@ -404,482 +241,115 @@ export function DatasetConsole() {
               <small>failureSeverityScore 平均值</small>
             </article>
             <article className={styles.heroCard}>
-              <span>Gold Tasks</span>
-              <strong>{goldStats?.totalTasks ?? goldTasks.length}</strong>
-              <small>{goldStats?.approvedImportable ?? 0} 条可导入</small>
+              <span>Auto Signals</span>
+              <strong>{cases.reduce((sum, item) => sum + (item.autoSignals?.length ?? 0), 0)}</strong>
+              <small>规则命中的自动判定信号</small>
             </article>
             <article className={styles.heroCard}>
-              <span>Reviewed</span>
-              <strong>{reviewStats.get("human_reviewed") ?? 0}</strong>
-              <small>{reviewStats.get("auto_captured") ?? 0} 条待人审</small>
+              <span>Overrides</span>
+              <strong>{cases.reduce((sum, item) => sum + (item.manualOverrides?.length ?? 0), 0)}</strong>
+              <small>人工标记错判的样本数</small>
             </article>
           </section>
 
-          <div className={styles.tabBar}>
-            <button
-              type="button"
-              className={`${styles.tabButton} ${activeTab === "browse" ? styles.tabActive : ""}`}
-              onClick={() => setActiveTab("browse")}
-            >
-              Bad Case 池
-            </button>
-            <button
-              type="button"
-              className={`${styles.tabButton} ${activeTab === "gold" ? styles.tabActive : ""}`}
-              onClick={() => setActiveTab("gold")}
-            >
-              Gold Set 标注
-            </button>
-          </div>
-
-          {activeTab === "browse" ? (
-            <section className={styles.stepIntro}>
-              <h2>浏览 Bad Case 与 cluster</h2>
-              <p>这里是工作台「沉淀到案例池」按钮的归宿。已抽出的失败案例按轻量聚类分组，主导标签可一眼识别热点。</p>
-              <div className={styles.howTo}>
-                <span className={styles.howToTitle}>怎么用</span>
-                <span>① 用「场景筛选」聚焦特定业务；点 cluster 展开看其内部 case。</span>
-                <span>② 觉得某个 case 值得作为 ground truth，点「转为 Gold Candidate」推进到第 2 步。</span>
-              </div>
-            </section>
-          ) : (
-            <section className={styles.stepIntro}>
-              <h2>Gold Set v2 标注流</h2>
-              <p>把 candidate 变成可分配、可审核、可导入的标注任务；只有 approved 且校验通过的 draft 会进入 labels.jsonl。</p>
-              <div className={styles.howTo}>
-                <span className={styles.howToTitle}>怎么用</span>
-                <span>① 左侧选一个任务；右侧编辑 dimension 评分、Goal / Recovery 状态与 evidence。</span>
-                <span>② 把 reviewStatus 改成 approved 并保存。</span>
-                <span>③ 点右上「导入 approved」把通过校验的 label 写入 gold set。</span>
-              </div>
-            </section>
-          )}
-
-          {activeTab === "browse" ? (
-          <section className={styles.panel}>
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>筛选与概览</h2>
-              <p>当前先支持按场景过滤，后续可扩到 cluster label、dominant tag 和时间窗口。</p>
+          <section className={styles.stepIntro}>
+            <h2>怎么用</h2>
+            <div className={styles.howTo}>
+              <span>① 在「场景筛选」聚焦特定业务，点 cluster 展开看其内部 case。</span>
+              <span>② 每条 case 展示命中信号、tag、原始 transcript；如系统判错，点「标记错判」即可。</span>
+              <span>③ 错判记录单独存储，不会影响自动判定主流程，可作为日后规则优化的反馈信号。</span>
             </div>
-            <button className={styles.secondaryButton} type="button" disabled={loading} onClick={() => void loadData()}>
-              {loading ? "刷新中…" : "刷新案例池"}
-            </button>
-          </div>
-          <div className={styles.formRow}>
-            <label className={styles.label}>
-              场景筛选
-              <select
-                className={styles.select}
-                value={selectedScenarioId}
-                onChange={(event) => setSelectedScenarioId(event.target.value)}
-              >
-                <option value="">全部场景</option>
-                {scenarioOptions.map((item) => (
-                  <option key={item.scenarioId} value={item.scenarioId}>
-                    {item.scenarioId}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {error ? <p className={styles.error}>{error}</p> : null}
-          {notice ? <p className={styles.notice}>{notice}</p> : null}
-          <div className={styles.tagStrip}>
-            {CASE_REVIEW_STATUS_OPTIONS.map((status) => (
-              <span className={styles.statusPill} key={status}>
-                {status}: {reviewStats.get(status) ?? 0}
-              </span>
-            ))}
-            {topTags.map(([tag, count]) => (
-              <span className={styles.tagPill} key={tag}>
-                {tag} · {count}
-              </span>
-            ))}
-          </div>
-        </section>
-          ) : null}
+          </section>
 
-          {activeTab === "gold" ? (
           <section className={styles.panel}>
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>Gold Set v2 标注任务</h2>
-              <p>把 gold set 扩展变成可分配、可审核、可导入的流程；只有 approved 且校验通过的 draft 会进入 labels.jsonl。</p>
-            </div>
-            <div className={styles.buttonRow}>
-              <button className={styles.secondaryButton} type="button" disabled={goldLoading} onClick={() => void loadGoldTasks()}>
-                {goldLoading ? "刷新中…" : "刷新任务"}
-              </button>
-              <button
-                className={styles.primaryButton}
-                type="button"
-                disabled={goldImporting || !goldStats?.approvedImportable}
-                onClick={() => void importApprovedLabels()}
-              >
-                {goldImporting ? "导入中…" : "导入 approved"}
+            <div className={styles.panelHeader}>
+              <div>
+                <h2>筛选与概览</h2>
+                <p>当前先支持按场景过滤，后续可扩到 cluster label、dominant tag 和时间窗口。</p>
+              </div>
+              <button className={styles.secondaryButton} type="button" disabled={loading} onClick={() => void loadData()}>
+                {loading ? "刷新中…" : "刷新案例池"}
               </button>
             </div>
-          </div>
+            <div className={styles.formRow}>
+              <label className={styles.label}>
+                场景筛选
+                <select
+                  className={styles.select}
+                  value={selectedScenarioId}
+                  onChange={(event) => setSelectedScenarioId(event.target.value)}
+                >
+                  <option value="">全部场景</option>
+                  {scenarioOptions.map((item) => (
+                    <option key={item.scenarioId} value={item.scenarioId}>
+                      {item.scenarioId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {error ? <p className={styles.error}>{error}</p> : null}
+            {notice ? <p className={styles.notice}>{notice}</p> : null}
+            <div className={styles.tagStrip}>
+              {CASE_REVIEW_STATUS_OPTIONS.map((status) => (
+                <span className={styles.statusPill} key={status}>
+                  {status}: {reviewStats.get(status) ?? 0}
+                </span>
+              ))}
+              {topTags.map(([tag, count]) => (
+                <span className={styles.tagPill} key={tag}>
+                  {tag} · {count}
+                </span>
+              ))}
+            </div>
+          </section>
 
-          <div className={styles.goldStats}>
-            {REVIEW_STATUS_OPTIONS.map((status) => (
-              <span className={styles.statusPill} key={status}>
-                {status}: {statusCounts[status] ?? 0}
-              </span>
-            ))}
-            <span className={styles.statusPill}>importable: {goldStats?.approvedImportable ?? 0}</span>
-          </div>
-          {goldError ? <p className={styles.error}>{goldError}</p> : null}
-          {goldNotice ? <p className={styles.notice}>{goldNotice}</p> : null}
-
-          <div className={styles.annotationGrid}>
-            <div className={styles.taskList}>
-              {goldTasks.length > 0 ? (
-                goldTasks.map((task) => {
-                  const validation = goldValidations.find((item) => item.taskId === task.taskId);
-                  const isActive = selectedTask?.taskId === task.taskId;
-                  return (
-                    <button
-                      className={`${styles.taskButton} ${isActive ? styles.taskButtonActive : ""}`}
-                      key={task.taskId}
-                      type="button"
-                      onClick={() => setSelectedTaskId(task.taskId)}
-                    >
-                      <strong>{task.caseId}</strong>
-                      <span>
-                        {task.assignee ?? "unassigned"} · {task.status}
-                      </span>
-                      <small>{validation?.importable ? "ready to import" : `${validation?.errors.length ?? 0} errors`}</small>
-                    </button>
-                  );
-                })
+          <section className={styles.panel}>
+            <div className={styles.panelHeader}>
+              <div>
+                <h2>Clusters</h2>
+                <p>代表样本优先选 medoid；聚类规则当前是 `duplicateGroupKey + semantic/structural distance` 的轻量版本。</p>
+              </div>
+              <span className={styles.meta}>{filteredClusters.length} 个</span>
+            </div>
+            <div className={styles.clusterList}>
+              {filteredClusters.length > 0 ? (
+                filteredClusters.map((cluster) => (
+                  <details className={styles.clusterCard} key={cluster.clusterId}>
+                    <summary className={styles.clusterSummary}>
+                      <div>
+                        <strong>{cluster.label}</strong>
+                        <p>
+                          rep={cluster.representativeCaseId} · size={cluster.size} · avgSeverity=
+                          {cluster.averageSeverityScore.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className={styles.metaRow}>
+                        {cluster.dominantTags.map((tag) => (
+                          <span className={styles.tagPill} key={`${cluster.clusterId}_${tag}`}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </summary>
+                    <div className={styles.clusterItems}>
+                      {cluster.items.map((item) => (
+                        <ReadOnlyCaseCard
+                          caseRecord={caseById.get(item.caseId)}
+                          item={item}
+                          key={item.caseId}
+                          markingFalsePositive={overrideCaseId === item.caseId}
+                          onMarkFalsePositive={markFalsePositive}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                ))
               ) : (
-                <div className={styles.empty}>当前没有 gold set 标注任务。</div>
+                <div className={styles.empty}>当前没有可展示的 cluster。</div>
               )}
             </div>
-
-            {selectedTask && selectedDraft ? (
-              <div className={styles.draftEditor}>
-                <div className={styles.caseHeader}>
-                  <div>
-                    <h3>{selectedTask.caseId}</h3>
-                    <p>
-                      scene={selectedTask.sceneId} · session={selectedTask.sessionId} · reviewer=
-                      {selectedTask.reviewer ?? "--"}
-                    </p>
-                  </div>
-                  <span className={styles.severityBadge}>{selectedValidation?.importable ? "READY" : "DRAFT"}</span>
-                </div>
-
-                {selectedDraft.autoPrefill ? (
-                  <div className={styles.prefillBox}>
-                    <strong>Auto-prefill</strong>
-                    <span>
-                      source={selectedDraft.autoPrefill.source} · generatedAt={selectedDraft.autoPrefill.generatedAt}
-                    </span>
-                    <div className={styles.metaRow}>
-                      {selectedDraft.autoPrefill.reasons.map((reason) => (
-                        <span className={styles.tagPill} key={reason}>
-                          {reason}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className={styles.editorGrid}>
-                  <label className={styles.label}>
-                    Review Status
-                    <select
-                      className={styles.select}
-                      value={selectedDraft.reviewStatus}
-                      onChange={(event) =>
-                        updateSelectedDraft((draft) => ({
-                          ...draft,
-                          reviewStatus: event.target.value as GoldSetReviewStatus,
-                        }))
-                      }
-                    >
-                      {REVIEW_STATUS_OPTIONS.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className={styles.label}>
-                    Labeler
-                    <input
-                      className={styles.input}
-                      value={selectedDraft.labeler ?? ""}
-                      onChange={(event) => updateSelectedDraft((draft) => ({ ...draft, labeler: event.target.value }))}
-                    />
-                  </label>
-                  <label className={styles.label}>
-                    Reviewer
-                    <input
-                      className={styles.input}
-                      value={selectedDraft.reviewer ?? ""}
-                      onChange={(event) => updateSelectedDraft((draft) => ({ ...draft, reviewer: event.target.value }))}
-                    />
-                  </label>
-                  <label className={styles.label}>
-                    Reviewed At
-                    <input
-                      className={styles.input}
-                      placeholder="2026-04-24T18:00:00+08:00"
-                      value={selectedDraft.reviewedAt ?? ""}
-                      onChange={(event) => updateSelectedDraft((draft) => ({ ...draft, reviewedAt: event.target.value }))}
-                    />
-                  </label>
-                </div>
-
-                <div className={styles.dimensionList}>
-                  {selectedDraft.dimensions.map((dimension, dimensionIndex) => (
-                    <div className={styles.dimensionRow} key={dimension.dimension}>
-                      <label className={styles.label}>
-                        {dimension.dimension}
-                        <input
-                          className={styles.input}
-                          max={5}
-                          min={1}
-                          type="number"
-                          value={dimension.score ?? ""}
-                          onChange={(event) =>
-                            updateSelectedDraft((draft) => ({
-                              ...draft,
-                              dimensions: draft.dimensions.map((item, index) =>
-                                index === dimensionIndex
-                                  ? { ...item, score: event.target.value ? Number(event.target.value) : null }
-                                  : item,
-                              ),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className={styles.label}>
-                        Evidence
-                        <input
-                          className={styles.input}
-                          value={dimension.evidence ?? ""}
-                          onChange={(event) =>
-                            updateSelectedDraft((draft) => ({
-                              ...draft,
-                              dimensions: draft.dimensions.map((item, index) =>
-                                index === dimensionIndex ? { ...item, evidence: event.target.value } : item,
-                              ),
-                            }))
-                          }
-                        />
-                      </label>
-                    </div>
-                  ))}
-                </div>
-
-                <div className={styles.editorGrid}>
-                  <label className={styles.label}>
-                    Goal Status
-                    <select
-                      className={styles.select}
-                      value={selectedDraft.goalCompletion.status ?? ""}
-                      onChange={(event) =>
-                        updateSelectedDraft((draft) => ({
-                          ...draft,
-                          goalCompletion: {
-                            ...draft.goalCompletion,
-                            status: event.target.value
-                              ? (event.target.value as GoldSetLabelDraftRecord["goalCompletion"]["status"])
-                              : null,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="">未标注</option>
-                      <option value="achieved">achieved</option>
-                      <option value="partial">partial</option>
-                      <option value="failed">failed</option>
-                      <option value="unclear">unclear</option>
-                    </select>
-                  </label>
-                  <label className={styles.label}>
-                    Goal Score
-                    <input
-                      className={styles.input}
-                      max={5}
-                      min={0}
-                      type="number"
-                      value={selectedDraft.goalCompletion.score ?? ""}
-                      onChange={(event) =>
-                        updateSelectedDraft((draft) => ({
-                          ...draft,
-                          goalCompletion: {
-                            ...draft.goalCompletion,
-                            score: event.target.value ? Number(event.target.value) : null,
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className={styles.label}>
-                    Recovery Status
-                    <select
-                      className={styles.select}
-                      value={selectedDraft.recoveryTrace.status ?? ""}
-                      onChange={(event) =>
-                        updateSelectedDraft((draft) => ({
-                          ...draft,
-                          recoveryTrace: {
-                            ...draft.recoveryTrace,
-                            status: event.target.value
-                              ? (event.target.value as GoldSetLabelDraftRecord["recoveryTrace"]["status"])
-                              : null,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="">未标注</option>
-                      <option value="none">none</option>
-                      <option value="completed">completed</option>
-                      <option value="failed">failed</option>
-                    </select>
-                  </label>
-                  <label className={styles.label}>
-                    Recovery Score
-                    <input
-                      className={styles.input}
-                      max={5}
-                      min={0}
-                      type="number"
-                      value={selectedDraft.recoveryTrace.qualityScore ?? ""}
-                      onChange={(event) =>
-                        updateSelectedDraft((draft) => ({
-                          ...draft,
-                          recoveryTrace: {
-                            ...draft.recoveryTrace,
-                            qualityScore: event.target.value ? Number(event.target.value) : null,
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <label className={styles.label}>
-                  Goal Evidence
-                  <textarea
-                    className={styles.textarea}
-                    value={selectedDraft.goalCompletion.evidence.join("\n")}
-                    onChange={(event) =>
-                      updateSelectedDraft((draft) => ({
-                        ...draft,
-                        goalCompletion: {
-                          ...draft.goalCompletion,
-                          evidence: event.target.value.split(/\r?\n/).filter((line) => line.trim().length > 0),
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label className={styles.label}>
-                  Recovery Notes
-                  <textarea
-                    className={styles.textarea}
-                    value={selectedDraft.recoveryTrace.notes ?? ""}
-                    onChange={(event) =>
-                      updateSelectedDraft((draft) => ({
-                        ...draft,
-                        recoveryTrace: { ...draft.recoveryTrace, notes: event.target.value },
-                      }))
-                    }
-                  />
-                </label>
-                <label className={styles.label}>
-                  Review Notes
-                  <textarea
-                    className={styles.textarea}
-                    value={selectedDraft.reviewNotes ?? ""}
-                    onChange={(event) =>
-                      updateSelectedDraft((draft) => ({
-                        ...draft,
-                        reviewNotes: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-
-                {selectedValidation?.errors.length ? (
-                  <div className={styles.validationBox}>
-                    {selectedValidation.errors.map((item) => (
-                      <span key={item}>{item}</span>
-                    ))}
-                  </div>
-                ) : null}
-
-                <pre className={styles.transcript}>{selectedTask.transcriptPreview.join("\n")}</pre>
-                <div className={styles.buttonRow}>
-                  <button className={styles.primaryButton} type="button" disabled={goldSaving} onClick={() => void saveSelectedDraft()}>
-                    {goldSaving ? "保存中…" : "保存 draft"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className={styles.empty}>请选择一个标注任务。</div>
-            )}
-          </div>
-        </section>
-          ) : null}
-
-          {activeTab === "browse" ? (
-          <section className={styles.panel}>
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>Clusters</h2>
-              <p>代表样本优先选 medoid；聚类规则当前是 `duplicateGroupKey + semantic/structural distance` 的轻量版本。</p>
-            </div>
-            <span className={styles.meta}>{filteredClusters.length} 个</span>
-          </div>
-          <div className={styles.clusterList}>
-            {filteredClusters.length > 0 ? (
-              filteredClusters.map((cluster) => (
-                <details className={styles.clusterCard} key={cluster.clusterId}>
-                  <summary className={styles.clusterSummary}>
-                    <div>
-                      <strong>{cluster.label}</strong>
-                      <p>
-                        rep={cluster.representativeCaseId} · size={cluster.size} · avgSeverity=
-                        {cluster.averageSeverityScore.toFixed(2)}
-                      </p>
-                    </div>
-                    <div className={styles.metaRow}>
-                      {cluster.dominantTags.map((tag) => (
-                        <span className={styles.tagPill} key={`${cluster.clusterId}_${tag}`}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </summary>
-                  <div className={styles.clusterItems}>
-                    {cluster.items.map((item) => (
-                      <CaseCardWithReview
-                        caseRecord={caseById.get(item.caseId)}
-                        item={item}
-                        key={item.caseId}
-                        promoting={promotingCaseId === item.caseId}
-                        savingReview={savingReviewCaseId === item.caseId}
-                        onPromote={promoteCaseToGoldSet}
-                        onUpdateReview={updateCaseReview}
-                      />
-                    ))}
-                  </div>
-                </details>
-              ))
-            ) : (
-              <div className={styles.empty}>当前没有可展示的 cluster。</div>
-            )}
-          </div>
-        </section>
-          ) : null}
+          </section>
         </main>
       </div>
     </AppShell>
@@ -887,125 +357,126 @@ export function DatasetConsole() {
 }
 
 /**
- * Render one bad case card with lightweight human review controls.
- * @param props Case item, full record and action handlers.
+ * Render one bad case card in read-only form, with a single "mark as false positive"
+ * action. No human review form, no gold candidate path.
+ *
+ * @param props Case item, full record and the override handler.
  * @returns Case card element.
  */
-function CaseCardWithReview(props: {
+function ReadOnlyCaseCard(props: {
   item: BadCaseCluster["items"][number];
   caseRecord?: DatasetCaseRecord;
-  promoting: boolean;
-  savingReview: boolean;
-  onPromote: (caseId: string) => Promise<void>;
-  onUpdateReview: (caseId: string, patch: Partial<DatasetCaseRecord>) => Promise<void>;
+  markingFalsePositive: boolean;
+  onMarkFalsePositive: (caseId: string, note?: string) => Promise<void>;
 }) {
-  const item = props.item;
-  const record = props.caseRecord;
+  const { item, caseRecord, markingFalsePositive, onMarkFalsePositive } = props;
+  const [showNoteInput, setShowNoteInput] = useState(false);
+  const [note, setNote] = useState("");
+  const overrides = caseRecord?.manualOverrides ?? [];
+  const alreadyMarked = overrides.some((o) => o.type === "false_positive");
+  const signals = caseRecord?.autoSignals ?? [];
+
   return (
-                      <article className={styles.caseCard}>
-                        <div className={styles.caseHeader}>
-                          <div>
-                            <h3>{item.title}</h3>
-                            <p>
-                              {item.caseId} · session={item.sessionId} · severity=
-                              {item.failureSeverityScore.toFixed(2)}
-                            </p>
-                          </div>
-                          <span className={styles.severityBadge}>{Math.round(item.failureSeverityScore * 100)}%</span>
-                        </div>
-                        <div className={styles.metaRow}>
-                          {item.tags.map((tag) => (
-                            <span className={styles.tagPill} key={`${item.caseId}_${tag}`}>
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                        {item.suggestedAction ? <p className={styles.actionText}>{item.suggestedAction}</p> : null}
-                        <div className={styles.buttonRow}>
-                          <button
-                            className={styles.secondaryButton}
-                            type="button"
-                            disabled={props.promoting}
-                            onClick={() => void props.onPromote(item.caseId)}
-                          >
-                            {props.promoting ? "生成中…" : "转为 Gold Candidate"}
-                          </button>
-                        </div>
-                        <div className={styles.reviewBox}>
-                          <div className={styles.reviewHeader}>
-                            <strong>Human Review</strong>
-                            <span>{record?.reviewStatus ?? "auto_captured"}</span>
-                          </div>
-                          <div className={styles.reviewGrid}>
-                            <label className={styles.label}>
-                              Verdict
-                              <select
-                                className={styles.select}
-                                value={record?.humanVerdict ?? ""}
-                                onChange={(event) =>
-                                  void props.onUpdateReview(item.caseId, {
-                                    humanVerdict: event.target.value
-                                      ? (event.target.value as DatasetCaseHumanVerdict)
-                                      : undefined,
-                                  })
-                                }
-                              >
-                                <option value="">未确认</option>
-                                {CASE_VERDICT_OPTIONS.map((verdict) => (
-                                  <option key={verdict} value={verdict}>
-                                    {verdict}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className={styles.label}>
-                              Failure Type
-                              <input
-                                className={styles.input}
-                                defaultValue={record?.failureType ?? ""}
-                                disabled={props.savingReview}
-                                onBlur={(event) =>
-                                  void props.onUpdateReview(item.caseId, { failureType: event.target.value.trim() || undefined })
-                                }
-                                placeholder="tool_misuse / off_topic / bad_recovery"
-                              />
-                            </label>
-                            <label className={styles.label}>
-                              Review Status
-                              <select
-                                className={styles.select}
-                                value={record?.reviewStatus ?? "auto_captured"}
-                                onChange={(event) =>
-                                  void props.onUpdateReview(item.caseId, {
-                                    reviewStatus: event.target.value as DatasetCaseReviewStatus,
-                                  })
-                                }
-                              >
-                                {CASE_REVIEW_STATUS_OPTIONS.map((status) => (
-                                  <option key={status} value={status}>
-                                    {status}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-                          <label className={styles.label}>
-                            Expected Behavior
-                            <textarea
-                              className={styles.textarea}
-                              defaultValue={record?.expectedBehavior ?? ""}
-                              disabled={props.savingReview}
-                              onBlur={(event) =>
-                                void props.onUpdateReview(item.caseId, {
-                                  expectedBehavior: event.target.value.trim() || undefined,
-                                })
-                              }
-                              placeholder="写清楚这个 case 里助手本应该怎么做，后续可升级为 gold set expected behavior。"
-                            />
-                          </label>
-                          {props.savingReview ? <span className={styles.savingHint}>保存审核信息中…</span> : null}
-                        </div>
-                        {item.transcript ? <pre className={styles.transcript}>{item.transcript}</pre> : null}
-                      </article>
+    <article className={styles.caseCard}>
+      <div className={styles.caseHeader}>
+        <div>
+          <h3>{item.title}</h3>
+          <p>
+            {item.caseId} · session={item.sessionId} · severity=
+            {item.failureSeverityScore.toFixed(2)}
+          </p>
+        </div>
+        <span className={styles.severityBadge}>{Math.round(item.failureSeverityScore * 100)}%</span>
+      </div>
+
+      <div className={styles.metaRow}>
+        {item.tags.map((tag) => (
+          <span className={styles.tagPill} key={`${item.caseId}_${tag}`}>
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      {signals.length > 0 ? (
+        <div className={styles.signalBox}>
+          <strong>命中信号</strong>
+          <ul>
+            {signals.map((signal, idx) => (
+              <li key={`${item.caseId}_signal_${idx}`}>{describeSignal(signal)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {item.suggestedAction ? <p className={styles.actionText}>{item.suggestedAction}</p> : null}
+      {item.transcript ? <pre className={styles.transcript}>{item.transcript}</pre> : null}
+
+      <div className={styles.overrideRow}>
+        {alreadyMarked ? (
+          <span className={styles.overrideBadge}>已标记为错判（{overrides.length}）</span>
+        ) : showNoteInput ? (
+          <div className={styles.overrideForm}>
+            <input
+              className={styles.input}
+              placeholder="可选：为什么这是错判？"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              disabled={markingFalsePositive}
+            />
+            <button
+              className={styles.primaryButton}
+              type="button"
+              disabled={markingFalsePositive}
+              onClick={async () => {
+                await onMarkFalsePositive(item.caseId, note);
+                setShowNoteInput(false);
+                setNote("");
+              }}
+            >
+              {markingFalsePositive ? "提交中…" : "确认错判"}
+            </button>
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              onClick={() => {
+                setShowNoteInput(false);
+                setNote("");
+              }}
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <button
+            className={styles.secondaryButton}
+            type="button"
+            onClick={() => setShowNoteInput(true)}
+          >
+            标记错判
+          </button>
+        )}
+      </div>
+    </article>
   );
+}
+
+/**
+ * Render one auto-signal entry as a short human-readable string.
+ *
+ * @param signal Auto signal record (loose shape).
+ * @returns Display string.
+ */
+function describeSignal(signal: Record<string, unknown>): string {
+  const kind = String(signal.kind ?? "");
+  if (kind === "negative_keyword") {
+    return `负面关键词「${String(signal.keyword ?? "")}」(turn ${signal.turnIndex})`;
+  }
+  if (kind === "metric") {
+    const metric = String(signal.metric ?? "");
+    return `客观指标 ${metric} = ${signal.value}`;
+  }
+  if (kind === "implicit_signal") {
+    return `隐式信号：${String(signal.signalId ?? "")}`;
+  }
+  return JSON.stringify(signal);
 }

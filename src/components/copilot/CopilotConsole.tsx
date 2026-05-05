@@ -44,8 +44,11 @@ type ChatChannel = {
   attachedFileName: string | null;
 };
 
+type ChatViewMode = "producer" | "engineer";
+
 const CHAT_STORAGE_KEY = "zeval.chat.channels.v1";
 const CHAT_ACTIVE_STORAGE_KEY = "zeval.chat.activeChannel.v1";
+const CHAT_VIEW_MODE_STORAGE_KEY = "zeval.chat.viewMode.v1";
 const LEGACY_CHAT_STORAGE_KEY = "zerore.chat.channels.v1";
 const LEGACY_CHAT_ACTIVE_STORAGE_KEY = "zerore.chat.activeChannel.v1";
 const DEFAULT_CHANNEL_TITLE = "New channel";
@@ -61,6 +64,7 @@ const SAMPLE_PROMPT_BUILT_IN =
 export function CopilotConsole() {
   const [channels, setChannels] = useState<ChatChannel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState("");
+  const [viewMode, setViewMode] = useState<ChatViewMode>("producer");
   const [hydrated, setHydrated] = useState(false);
   const [running, setRunning] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -70,6 +74,7 @@ export function CopilotConsole() {
   const scenarioId = activeChannel?.scenarioId ?? "toB-customer-support";
   const attachedRows = activeChannel?.attachedRows ?? null;
   const attachedFileName = activeChannel?.attachedFileName ?? null;
+  const visibleTurns = filterTurnsForViewMode(turns, viewMode);
 
   // Load saved channels once on mount.
   useEffect(() => {
@@ -81,8 +86,10 @@ export function CopilotConsole() {
     const nextActiveId = nextChannels.some((channel) => channel.id === storedActiveId)
       ? storedActiveId ?? nextChannels[0].id
       : nextChannels[0].id;
+    const storedViewMode = window.localStorage.getItem(CHAT_VIEW_MODE_STORAGE_KEY);
     setChannels(nextChannels);
     setActiveChannelId(nextActiveId);
+    setViewMode(storedViewMode === "engineer" ? "engineer" : "producer");
     setHydrated(true);
   }, []);
 
@@ -92,6 +99,12 @@ export function CopilotConsole() {
     window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(channels));
     window.localStorage.setItem(CHAT_ACTIVE_STORAGE_KEY, activeChannelId);
   }, [activeChannelId, channels, hydrated]);
+
+  // Persist the transcript verbosity mode.
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(CHAT_VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [hydrated, viewMode]);
 
   // Auto-scroll on new turn.
   useEffect(() => {
@@ -206,7 +219,13 @@ export function CopilotConsole() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             messages,
-            attachments: rows ? { rawRows: rows, scenarioId: activeChannel.scenarioId } : { scenarioId: activeChannel.scenarioId },
+            attachments: rows
+              ? {
+                  rawRows: rows,
+                  scenarioId: activeChannel.scenarioId,
+                  sourceFileName: activeChannel.attachedFileName ?? undefined,
+                }
+              : { scenarioId: activeChannel.scenarioId },
           }),
         });
 
@@ -388,6 +407,22 @@ export function CopilotConsole() {
                 {turns.length} turns · {attachedFileName ? `attached ${attachedRows?.length ?? 0} rows` : "no attachment"}
               </p>
             </div>
+            <div className={styles.modeToggle} aria-label="chat view mode">
+              <button
+                type="button"
+                className={viewMode === "producer" ? styles.modeActive : ""}
+                onClick={() => setViewMode("producer")}
+              >
+                Producer
+              </button>
+              <button
+                type="button"
+                className={viewMode === "engineer" ? styles.modeActive : ""}
+                onClick={() => setViewMode("engineer")}
+              >
+                Engineer
+              </button>
+            </div>
           </header>
 
           <section className={styles.transcript} ref={transcriptRef}>
@@ -417,8 +452,8 @@ export function CopilotConsole() {
               </div>
             ) : null}
 
-            {turns.map((t, i) => (
-              <TurnView key={`${activeChannel.id}-${i}`} turn={t} onAction={triggerNextAction} />
+            {visibleTurns.map((t, i) => (
+              <TurnView key={`${activeChannel.id}-${i}`} turn={t} viewMode={viewMode} onAction={triggerNextAction} />
             ))}
 
             {running ? <LoadingDot /> : null}
@@ -627,6 +662,20 @@ function mapEventToTurn(event: { type: string } & Record<string, unknown>): Chat
 }
 
 /**
+ * Filter transcript events for the selected product/engineering view.
+ *
+ * @param turns Full stored transcript.
+ * @param viewMode Current view mode.
+ * @returns Turns visible in the transcript.
+ */
+function filterTurnsForViewMode(turns: ChatTurn[], viewMode: ChatViewMode): ChatTurn[] {
+  if (viewMode === "engineer") {
+    return turns;
+  }
+  return turns.filter((turn) => turn.kind === "user" || turn.kind === "final" || turn.kind === "plan" || turn.kind === "error");
+}
+
+/**
  * Render a single chat turn.
  *
  * @param props Turn props.
@@ -634,9 +683,10 @@ function mapEventToTurn(event: { type: string } & Record<string, unknown>): Chat
  */
 function TurnView(props: {
   turn: ChatTurn;
+  viewMode: ChatViewMode;
   onAction: (a: { label: string; skill?: string; args?: unknown }) => void;
 }) {
-  const { turn, onAction } = props;
+  const { turn, viewMode, onAction } = props;
   switch (turn.kind) {
     case "user":
       return (
@@ -646,6 +696,14 @@ function TurnView(props: {
         </div>
       );
     case "plan":
+      if (viewMode === "producer") {
+        return (
+          <div className={styles.compactPlan}>
+            <span className={styles.compactPlanDot} />
+            正在分析评估结果…
+          </div>
+        );
+      }
       return (
         <div className={`${styles.bubble} ${styles.bubbleAgent}`}>
           <div className={styles.bubbleRole}>Chat · 计划</div>

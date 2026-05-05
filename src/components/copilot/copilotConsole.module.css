@@ -199,6 +199,38 @@
   font-size: 12px;
 }
 
+.modeToggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--chat-line);
+  border-radius: 11px;
+  background: #ffffff;
+}
+
+.modeToggle button {
+  min-width: 78px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modeToggle button:hover {
+  color: var(--chat-ink);
+}
+
+.modeToggle .modeActive {
+  background: #111827;
+  color: #ffffff;
+}
+
 .transcript {
   flex: 1;
   min-height: 420px;
@@ -365,6 +397,28 @@
   color: #ffffff;
   font-size: 10px;
   font-weight: 760;
+}
+
+.compactPlan {
+  align-self: flex-start;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: 11px;
+  background: #ffffff;
+  color: var(--chat-muted);
+  font-size: 12.5px;
+}
+
+.compactPlanDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--chat-blue);
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.08);
 }
 
 .toolCall,

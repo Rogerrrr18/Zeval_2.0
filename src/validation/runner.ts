@@ -42,11 +42,12 @@ export async function runReplayValidation(params: {
   replyApiBaseUrl?: string;
   useLlm?: boolean;
   replyTimeoutMs?: number;
+  workspaceId?: string;
 }): Promise<ValidationRunSnapshot> {
   const validationRunId = allocateValidationRunId("replay");
   const createdAt = new Date().toISOString();
   const artifactDir = `artifacts/validation-runs/${validationRunId}`;
-  const workbenchStore = createWorkbenchBaselineStore();
+  const workbenchStore = createWorkbenchBaselineStore({ workspaceId: params.workspaceId });
   const resolvedBaseline = await resolveBaselineSnapshot(
     params.packageSnapshot,
     workbenchStore,
@@ -139,11 +140,12 @@ export async function runOfflineEvalValidation(params: {
   replyApiBaseUrl?: string;
   useLlm?: boolean;
   replyTimeoutMs?: number;
+  workspaceId?: string;
 }): Promise<ValidationRunSnapshot> {
   const validationRunId = allocateValidationRunId("offline");
   const createdAt = new Date().toISOString();
   const artifactDir = `artifacts/validation-runs/${validationRunId}`;
-  const datasetStore = createDatasetStore();
+  const datasetStore = createDatasetStore({ workspaceId: params.workspaceId });
   const suite = await resolveOfflineValidationSuite(params.packageSnapshot, datasetStore, params.sampleBatchId);
   const warnings = [...suite.warnings];
   const baseUrl =

@@ -28,6 +28,7 @@ export type CopilotInput = {
   attachments?: {
     rawRows?: unknown[];
     scenarioId?: string;
+    sourceFileName?: string;
   };
   /** Workspace id (auth) */
   workspaceId?: string;
@@ -133,6 +134,9 @@ export async function runCopilotTurn(
   }
   if (input.attachments?.scenarioId) {
     ctx.scratch.attachedScenarioId = input.attachments.scenarioId;
+  }
+  if (input.attachments?.sourceFileName) {
+    ctx.scratch.attachedFileName = input.attachments.sourceFileName;
   }
 
   const systemPrompt = buildSystemPrompt();

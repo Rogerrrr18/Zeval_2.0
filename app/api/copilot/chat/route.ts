@@ -7,7 +7,7 @@
  * Body:
  *   {
  *     messages: [{ role: "user"|"assistant", content: string }, ...],
- *     attachments?: { rawRows?: RawRow[]; scenarioId?: string }
+ *     attachments?: { rawRows?: RawRow[]; scenarioId?: string; sourceFileName?: string }
  *   }
  */
 
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   const attachments = b.attachments && typeof b.attachments === "object"
-    ? (b.attachments as { rawRows?: unknown[]; scenarioId?: string })
+    ? (b.attachments as { rawRows?: unknown[]; scenarioId?: string; sourceFileName?: string })
     : undefined;
 
   const encoder = new TextEncoder();

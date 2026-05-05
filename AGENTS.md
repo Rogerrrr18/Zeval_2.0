@@ -1,4 +1,4 @@
-# ZERORE MVP Agent Rules
+# Zeval MVP Agent Rules
 
 本项目当前阶段目标只有一个：在最短时间内打通 MVP pipeline。
 

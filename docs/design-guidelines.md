@@ -1,6 +1,6 @@
 ## Visual Theme
 
-ZERORE Eval Console 采用开发工具风格的暗色工作台视觉：
+Zeval Eval Console 采用开发工具风格的暗色工作台视觉：
 
 - 背景是深海军蓝到近黑的渐变基底，带轻微网格与霓虹冷光。
 - 模块是半透明分析面板，不做厚重卡片堆叠。

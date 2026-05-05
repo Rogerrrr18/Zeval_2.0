@@ -19,6 +19,7 @@ import { getScenarioTemplateById } from "@/scenarios";
 import type { EvaluateResponse, RawChatlogRow, ScenarioEvaluateContext } from "@/types/pipeline";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { EvalTrace } from "@/types/eval-trace";
+import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
 import type {
   KnowledgeRetentionFact,
   RetrievalContext,
@@ -45,6 +46,11 @@ export type EvaluateRunOptions = {
     retentionFacts?: KnowledgeRetentionFact[];
     roleProfile?: RoleProfile;
   };
+  /**
+   * Optional stage event callback used by streamed HTTP evaluation.
+   * The pipeline keeps working when the callback throws.
+   */
+  onProgress?: (event: EvaluationProgressEvent) => void;
 };
 
 /**
@@ -62,15 +68,17 @@ export async function runEvaluatePipeline(
     warnings.push("检测到缺失 timestamp，部分时序指标已降级。");
   }
 
-  const { enrichedRows, topicSegments } = await enrichRows(rawRows, options.useLlm, options.runId);
+  const { enrichedRows, topicSegments } = await runEvaluateStage(options, "parse", "解析数据", () =>
+    enrichRows(rawRows, options.useLlm, options.runId),
+  );
   const enrichedCsv = toEnrichedCsv(enrichedRows);
   const evalCaseBundle = buildEvalCaseBundle(enrichedRows, options.structuredTaskMetrics, options.trace);
-  const objectiveMetrics = buildObjectiveMetrics(enrichedRows);
-  const subjectiveMetrics = await buildSubjectiveMetrics(enrichedRows, options.useLlm, options.runId);
-  const badCaseAssets = buildBadCaseAssets(enrichedRows, objectiveMetrics, subjectiveMetrics, {
-    runId: options.runId,
-    scenarioId: options.scenarioId,
-  });
+  const objectiveMetrics = await runEvaluateStage(options, "objective", "客观指标", async () =>
+    buildObjectiveMetrics(enrichedRows),
+  );
+  const subjectiveMetrics = await runEvaluateStage(options, "subjective", "主观指标", () =>
+    buildSubjectiveMetrics(enrichedRows, options.useLlm, options.runId),
+  );
   const scenarioTemplate = options.scenarioId ? getScenarioTemplateById(options.scenarioId) : null;
   if (options.scenarioId && !scenarioTemplate) {
     warnings.push(`未找到场景模板：${options.scenarioId}，本次按通用评估返回。`);
@@ -99,25 +107,36 @@ export async function runEvaluatePipeline(
       extendedInputs.retentionFacts?.length ||
       extendedInputs.roleProfile,
   );
-  const extendedMetrics = hasAnyExtendedInput
-    ? await buildExtendedMetrics({
-        ...extendedInputs,
-        useLlm: options.useLlm,
-        runId: options.runId,
-      })
-    : undefined;
-
-  const charts = buildChartPayloads(enrichedRows);
-  const suggestions = buildSuggestions(enrichedRows, objectiveMetrics, subjectiveMetrics);
-  const summaryCards = buildSummaryCards(
-    objectiveMetrics,
-    subjectiveMetrics,
-    new Set(rawRows.map((row) => row.sessionId)).size,
-    rawRows.length,
-    scenarioEvaluation,
-    badCaseAssets.length,
-    options.structuredTaskMetrics,
+  const extendedMetrics = await runEvaluateStage(options, "extended", "扩展指标", async () =>
+    hasAnyExtendedInput
+      ? buildExtendedMetrics({
+          ...extendedInputs,
+          useLlm: options.useLlm,
+          runId: options.runId,
+        })
+      : undefined,
   );
+
+  const badCaseAssets = await runEvaluateStage(options, "badcase", "bad case 抽取", async () =>
+    buildBadCaseAssets(enrichedRows, objectiveMetrics, subjectiveMetrics, {
+      runId: options.runId,
+      scenarioId: options.scenarioId,
+    }),
+  );
+
+  const { charts, suggestions, summaryCards } = await runEvaluateStage(options, "complete", "完成", async () => ({
+    charts: buildChartPayloads(enrichedRows),
+    suggestions: buildSuggestions(enrichedRows, objectiveMetrics, subjectiveMetrics),
+    summaryCards: buildSummaryCards(
+      objectiveMetrics,
+      subjectiveMetrics,
+      new Set(rawRows.map((row) => row.sessionId)).size,
+      rawRows.length,
+      scenarioEvaluation,
+      badCaseAssets.length,
+      options.structuredTaskMetrics,
+    ),
+  }));
 
   if (subjectiveMetrics.status !== "ready") {
     warnings.push("主观评估当前为降级模式（LLM judge 调用失败或未启用）。");
@@ -161,6 +180,47 @@ export async function runEvaluatePipeline(
   };
 
   return response;
+}
+
+/**
+ * Run one named evaluation stage and emit observable progress events.
+ *
+ * @param options Evaluation options containing optional progress callback.
+ * @param stage Stable stage key.
+ * @param label Human-readable stage label.
+ * @param operation Stage operation.
+ * @returns Operation result.
+ */
+async function runEvaluateStage<T>(
+  options: EvaluateRunOptions,
+  stage: EvaluationStageKey,
+  label: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  emitProgress(options, { type: "stage", stage, status: "running", message: `${label}进行中` });
+  try {
+    const result = await operation();
+    emitProgress(options, { type: "stage", stage, status: "done", message: `${label}完成` });
+    return result;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    emitProgress(options, { type: "stage", stage, status: "failed", message: `${label}失败`, detail });
+    throw error;
+  }
+}
+
+/**
+ * Emit a progress event without letting callback failures break evaluation.
+ *
+ * @param options Evaluation options.
+ * @param event Progress event.
+ */
+function emitProgress(options: EvaluateRunOptions, event: EvaluationProgressEvent): void {
+  try {
+    options.onProgress?.(event);
+  } catch (error) {
+    console.warn(`[EVALUATE] progress callback failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { z } from "zod";
 import { getZeroreRequestContext, getZevalDataScope } from "@/auth/context";
 import { buildEvaluationProjection, persistEvaluationProjection } from "@/db/evaluation-projection";
 import { createZeroreDatabase } from "@/db";
@@ -6,6 +7,7 @@ import { redactRawRows } from "@/pii/redaction";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
 import { enqueueLocalJob } from "@/queue";
 import { evaluateRequestSchema } from "@/schemas/api";
+import type { EvaluationProgressEvent } from "@/types/evaluation-progress";
 
 /**
  * Execute MVP evaluation chain from raw rows.
@@ -16,6 +18,7 @@ export async function POST(request: Request) {
   try {
     const context = getZeroreRequestContext(request);
     const dataScope = getZevalDataScope(context);
+    const streamMode = new URL(request.url).searchParams.get("stream") === "1";
     const parsedBody = evaluateRequestSchema.safeParse(await request.json());
     if (!parsedBody.success) {
       return NextResponse.json(
@@ -28,6 +31,16 @@ export async function POST(request: Request) {
     const rawRows = redaction.rows;
     const runId = body.runId ?? `run_${Date.now()}`;
     const useLlm = Boolean(body.useLlm);
+    if (streamMode) {
+      return streamEvaluateRun({
+        context,
+        rawRows,
+        body,
+        redactionReport: redaction.report,
+        runId,
+        useLlm,
+      });
+    }
     if (body.asyncMode) {
       const job = await enqueueLocalJob({
         workspaceId: context.workspaceId,
@@ -98,4 +111,94 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "evaluate 未知错误";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/**
+ * Stream a synchronous evaluation run as SSE stage events followed by result.
+ *
+ * @param input Evaluation inputs already validated by the route.
+ * @returns SSE response.
+ */
+function streamEvaluateRun(input: {
+  context: ReturnType<typeof getZeroreRequestContext>;
+  rawRows: ReturnType<typeof redactRawRows>["rows"];
+  body: z.infer<typeof evaluateRequestSchema>;
+  redactionReport: ReturnType<typeof redactRawRows>["report"];
+  runId: string;
+  useLlm: boolean;
+}): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      const onProgress = (event: EvaluationProgressEvent) => send(event);
+      try {
+        console.info(
+          `[EVALUATE] runId=${input.runId} STREAM_START messages=${input.rawRows.length} useLlm=${input.useLlm}`,
+        );
+        const response = await runEvaluatePipeline(input.rawRows, {
+          useLlm: input.useLlm,
+          runId: input.runId,
+          scenarioId: input.body.scenarioId,
+          scenarioContext: input.body.scenarioContext
+            ? {
+                scenarioId: input.body.scenarioId,
+                onboardingAnswers: input.body.scenarioContext.onboardingAnswers,
+              }
+            : undefined,
+          structuredTaskMetrics: input.body.structuredTaskMetrics,
+          trace: input.body.trace,
+          persistArtifact: input.body.persistArtifact ?? Boolean(input.body.artifactBaseName),
+          artifactBaseName: input.body.artifactBaseName,
+          extendedInputs: input.body.extendedInputs,
+          onProgress,
+        });
+        response.meta.organizationId = input.context.organizationId;
+        response.meta.projectId = input.context.projectId;
+        response.meta.workspaceId = input.context.workspaceId;
+        response.meta.piiRedaction = input.redactionReport;
+        if (input.redactionReport.redactedFields > 0) {
+          response.meta.warnings.push(
+            `PII 脱敏已处理 ${input.redactionReport.redactedFields} 处：${input.redactionReport.categories.join(", ")}。`,
+          );
+        }
+        try {
+          const projection = buildEvaluationProjection(response, {
+            organizationId: input.context.organizationId,
+            projectId: input.context.projectId,
+            workspaceId: input.context.workspaceId,
+            runId: input.runId,
+            useLlm: input.useLlm,
+          });
+          const database = await createZeroreDatabase();
+          await persistEvaluationProjection(database, projection);
+          console.info(
+            `[EVALUATE] runId=${input.runId} STREAM_PROJECTION records=${projection.dbRecords.length} evidence=${projection.summary.evidenceSpans}`,
+          );
+        } catch (projectionError) {
+          const projectionMessage =
+            projectionError instanceof Error ? projectionError.message : "evaluation projection 未知错误";
+          response.meta.warnings.push(`结构化质量信号写入失败：${projectionMessage}`);
+          console.warn(`[EVALUATE] runId=${input.runId} STREAM_PROJECTION_FAILED ${projectionMessage}`);
+        }
+        send({ type: "result", result: response });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "evaluate 未知错误";
+        send({ type: "error", message });
+      } finally {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      "x-accel-buffering": "no",
+    },
+  });
 }

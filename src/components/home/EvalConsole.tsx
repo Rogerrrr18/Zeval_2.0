@@ -10,6 +10,12 @@ import { BadCasePanel } from "@/components/home/BadCasePanel";
 import { previewCsvLines, splitCsvLine } from "@/lib/csv";
 import { inferFormatFromFileName } from "@/parsers";
 import { ChartsPanel } from "@/components/home/ChartsPanel";
+import {
+  EvaluationProgress,
+  applyEvaluationProgressEvent,
+  createInitialEvaluationStages,
+  type EvaluationStageState,
+} from "@/components/home/EvaluationProgress";
 import { ExtendedMetricsPanel } from "@/components/home/ExtendedMetricsPanel";
 import { FeatherIcon } from "@/components/home/FeatherIcon";
 import { GoalCompletionPanel } from "@/components/home/GoalCompletionPanel";
@@ -27,6 +33,7 @@ import { SCENARIO_OPTIONS } from "@/scenarios";
 import type { DataMappingPlan } from "@/types/data-onboarding";
 import type { EvalCaseBundle } from "@/types/eval-case";
 import type { EvalMetricRegistrySnapshot, EvalMetricResult } from "@/types/eval-metric";
+import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { ScenarioEvaluationMetric, ScenarioSyntheticCaseSeed } from "@/types/scenario";
 import type {
@@ -66,6 +73,14 @@ const PROCESSING_LOGS = [
   "生成图表载荷、证据与策略建议",
   "组装本次评估交付结果",
 ];
+const EVALUATION_STAGE_INDEX: Record<EvaluationStageKey, number> = {
+  parse: 0,
+  objective: 1,
+  subjective: 2,
+  extended: 3,
+  badcase: 4,
+  complete: 5,
+};
 const ALLOWED_EXTENSIONS = new Set(["csv", "json", "jsonl", "txt", "md"]);
 const MAX_UPLOAD_SIZE_MB = 5;
 const EVAL_CONSOLE_SNAPSHOT_KEY = "zeval:evalConsoleSnapshot:v2";
@@ -107,6 +122,62 @@ async function requestDataMappingPlan(
 }
 
 /**
+ * Consume evaluate SSE events and return the streamed result payload.
+ *
+ * @param response Fetch response from /api/evaluate?stream=1.
+ * @param onStage Stage event callback.
+ * @returns Completed evaluate response.
+ */
+async function readEvaluateStream(
+  response: Response,
+  onStage: (event: EvaluationProgressEvent) => void,
+): Promise<EvaluateResponse> {
+  if (!response.body) {
+    throw new Error("评估流不可用，请重试。");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: EvaluateResponse | null = null;
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const data = chunk
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data || data === "[DONE]") {
+        continue;
+      }
+      const event = JSON.parse(data) as
+        | EvaluationProgressEvent
+        | { type: "result"; result: EvaluateResponse }
+        | { type: "error"; message: string };
+      if (event.type === "stage") {
+        onStage(event);
+      } else if (event.type === "result") {
+        result = event.result;
+      } else if (event.type === "error") {
+        throw new Error(event.message);
+      }
+    }
+  }
+
+  if (!result) {
+    throw new Error("评估流结束但未返回结果。");
+  }
+  return result;
+}
+
+/**
  * Render the main evaluation console.
  */
 export function EvalConsole() {
@@ -119,6 +190,10 @@ export function EvalConsole() {
   const [runState, setRunState] = useState<EvalConsoleRunState>("idle");
   const [dragActive, setDragActive] = useState(false);
   const [processStep, setProcessStep] = useState(0);
+  const [evaluationStages, setEvaluationStages] = useState<Record<EvaluationStageKey, EvaluationStageState>>(
+    createInitialEvaluationStages,
+  );
+  const [showEvaluationProgress, setShowEvaluationProgress] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [baselineCustomerId, setBaselineCustomerId] = useState("default");
@@ -278,6 +353,8 @@ export function EvalConsole() {
       setIngestResult(null);
       setRemediationPackage(null);
       setDataMappingPlan(null);
+      setShowEvaluationProgress(false);
+      setEvaluationStages(createInitialEvaluationStages());
       setFileName(file.name);
       const inferred = inferFormatFromFileName(file.name);
       setFormat(inferred);
@@ -315,6 +392,8 @@ export function EvalConsole() {
       setIngestResult(null);
       setRemediationPackage(null);
       setDataMappingPlan(null);
+      setShowEvaluationProgress(false);
+      setEvaluationStages(createInitialEvaluationStages());
       setFileName(SGD_SAMPLE_DATASET.fileName);
       setFormat("json");
       setSelectedScenarioId("");
@@ -375,20 +454,17 @@ export function EvalConsole() {
       return;
     }
 
-    let step = 0;
     setRunState("running");
     setError("");
     setNotice("");
     setProcessStep(0);
+    setCurrentStep(1);
+    setShowEvaluationProgress(true);
+    setEvaluationStages(createInitialEvaluationStages());
     setRemediationPackage(null);
 
-    const timer = window.setInterval(() => {
-      step = Math.min(PROCESSING_LOGS.length - 1, step + 1);
-      setProcessStep(step);
-    }, 1000);
-
     try {
-      const response = await fetch("/api/evaluate", {
+      const response = await fetch("/api/evaluate?stream=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -406,19 +482,32 @@ export function EvalConsole() {
             : undefined,
         }),
       });
-      const result = (await response.json()) as Partial<EvaluateResponse> & { error?: string };
       if (!response.ok) {
+        const result = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(result.error ?? "评估执行失败");
       }
-      setEvaluateResult(result as EvaluateResponse);
+      const result = await readEvaluateStream(response, (event) => {
+        setEvaluationStages((current) => applyEvaluationProgressEvent(current, event));
+        setProcessStep(EVALUATION_STAGE_INDEX[event.stage]);
+      });
+      setEvaluateResult(result);
       setRunState("success");
       setProcessStep(PROCESSING_LOGS.length - 1);
       setNotice("评估完成，已生成图表、业务 KPI、策略与中间产物。");
+      window.setTimeout(() => setShowEvaluationProgress(false), 900);
     } catch (requestError) {
       setRunState("error");
-      setError(requestError instanceof Error ? requestError.message : "评估执行失败");
-    } finally {
-      window.clearInterval(timer);
+      const message = requestError instanceof Error ? requestError.message : "评估执行失败";
+      setError(message);
+      setEvaluationStages((current) =>
+        applyEvaluationProgressEvent(current, {
+          type: "stage",
+          stage: "complete",
+          status: "failed",
+          message: "评估失败",
+          detail: message,
+        }),
+      );
     }
   }
 
@@ -673,6 +762,8 @@ export function EvalConsole() {
             <StepEvaluate
               runState={runState}
               processStep={processStep}
+              evaluationStages={evaluationStages}
+              showEvaluationProgress={showEvaluationProgress || runState === "error"}
               warnings={warnings}
               summaryCards={summaryCards}
               evaluateResult={evaluateResult}
@@ -1152,6 +1243,8 @@ function formatRequiredField(value: string): string {
 type StepEvaluateProps = {
   runState: EvalConsoleRunState;
   processStep: number;
+  evaluationStages: Record<EvaluationStageKey, EvaluationStageState>;
+  showEvaluationProgress: boolean;
   warnings: string[];
   summaryCards: SummaryCard[];
   evaluateResult: EvaluateResponse | null;
@@ -1208,6 +1301,7 @@ function StepEvaluate(props: StepEvaluateProps) {
           logs={PROCESSING_LOGS}
           warnings={props.warnings}
         />
+        <EvaluationProgress visible={props.showEvaluationProgress} stages={props.evaluationStages} />
       </section>
 
       {props.evaluateResult ? (

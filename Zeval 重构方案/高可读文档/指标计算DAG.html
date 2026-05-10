@@ -28,6 +28,7 @@
         --c-llm: #8a5cf2;
         --c-subjective: #d35f7d;
         --c-output: #1f86d6;
+        --c-capability: #06b6d4;
 
         --edge-default: rgba(170, 188, 215, 0.55);
         --edge-llm: rgba(170, 110, 255, 0.85);
@@ -294,7 +295,7 @@
     <header>
       <div>
         <h1>Zeval 主客观指标计算 DAG</h1>
-        <div class="subtitle">原始 → 规范 → 主题 → 情绪 → 行级 → 客观/隐式 → 主观 → 报告</div>
+        <div class="subtitle">原始 → 规范 → 主题 → 情绪 → 行级 → 客观/隐式 → 主观 → <span style="color:#06b6d4">能力维度（MVP）</span> → 报告</div>
       </div>
       <div class="controls">
         <button id="fit">适应窗口</button>
@@ -312,6 +313,7 @@
         <button id="layerNone">全部隐藏</button>
         <button id="layerObjective">仅客观链路</button>
         <button id="layerSubjective">仅主观链路</button>
+        <button id="layerCapability" style="border-color:rgba(6,182,212,0.5);color:#06b6d4;">仅能力维度</button>
       </div>
       <div class="layer-toggle" id="layerToggle"></div>
 
@@ -325,6 +327,111 @@
         <div class="name">尚未选中节点</div>
         <div class="meta">点击图中节点查看详情。</div>
       </div>
+
+      <h2 style="margin-top:20px;color:#06b6d4;">能力维度 Schema</h2>
+      <p>5 个 MVP 维度一次 LLM 调用，LLM 只输出类别标签，后端做固定映射。</p>
+
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#e2e8f0;padding:6px 0;">▸ LLM 输出 JSON Schema</summary>
+        <pre style="font-size:10.5px;line-height:1.55;background:rgba(0,0,0,0.35);border-radius:8px;padding:10px;margin-top:6px;overflow-x:auto;color:#a5f3fc;">{
+  "goal_completion": {
+    "verdict": "achieved|partial|failed",
+    "reason": "string",
+    "evidence_turns": [int, ...]
+  },
+  "instruction_following": {
+    "level": "L1|L2|L3|L4|L5",
+    "reason": "string",
+    "evidence_turns": [int, ...]
+  },
+  "multi_turn_coherence": {
+    "level": "L1|L2|L3|L4|L5",
+    "reason": "string",
+    "evidence_turns": [int, ...]
+  },
+  "response_quality": {
+    "level": "L1|L2|L3|L4|L5",
+    "reason": "string",
+    "evidence_turns": [int, ...]
+  },
+  "safety_and_tone": {
+    "safety_ok": true|false,
+    "level": "L1|L2|L3|L4|L5",
+    "reason": "string"
+  }
+}</pre>
+      </details>
+
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#e2e8f0;padding:6px 0;">▸ 级别→分值映射（固定，后端执行）</summary>
+        <table style="font-size:11px;width:100%;border-collapse:collapse;margin-top:6px;">
+          <thead><tr style="color:#94a3b8;border-bottom:1px solid rgba(255,255,255,0.1);">
+            <th style="text-align:left;padding:4px 6px;">级别/断言</th>
+            <th style="text-align:right;padding:4px 6px;">分值</th>
+            <th style="text-align:right;padding:4px 6px;">权重</th>
+          </tr></thead>
+          <tbody style="color:#cbd5e1;">
+            <tr><td style="padding:3px 6px;" colspan="3" style="color:#94a3b8;font-style:italic;">goal_completion（断言，weight=0.35）</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">achieved</td><td style="text-align:right;padding:2px 6px;color:#4ade80;">1.00</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.35</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">partial</td><td style="text-align:right;padding:2px 6px;color:#fbbf24;">0.50</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.35</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">failed</td><td style="text-align:right;padding:2px 6px;color:#f87171;">0.00</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.35</td></tr>
+            <tr><td style="padding:3px 6px;" colspan="3"><span style="color:#94a3b8;font-style:italic;">L1-L5 分类（各维度共用映射）</span></td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">L1</td><td style="text-align:right;padding:2px 6px;color:#f87171;">0.00</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">—</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">L2</td><td style="text-align:right;padding:2px 6px;color:#fb923c;">0.25</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">—</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">L3</td><td style="text-align:right;padding:2px 6px;color:#fbbf24;">0.50</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">—</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">L4</td><td style="text-align:right;padding:2px 6px;color:#a3e635;">0.75</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">—</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">L5</td><td style="text-align:right;padding:2px 6px;color:#4ade80;">1.00</td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">—</td></tr>
+            <tr><td style="padding:3px 6px;" colspan="3"><span style="color:#94a3b8;font-style:italic;">权重分配（合计=1.0）</span></td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">instruction_following</td><td style="text-align:right;padding:2px 6px;"></td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.20</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">multi_turn_coherence</td><td style="text-align:right;padding:2px 6px;"></td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.20</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">response_quality</td><td style="text-align:right;padding:2px 6px;"></td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.15</td></tr>
+            <tr><td style="padding:2px 6px 2px 14px;">safety_and_tone</td><td style="text-align:right;padding:2px 6px;"></td><td style="text-align:right;padding:2px 6px;color:#94a3b8;">×0.10</td></tr>
+          </tbody>
+        </table>
+      </details>
+
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#e2e8f0;padding:6px 0;">▸ 请求示例（退款场景）</summary>
+        <div style="font-size:10.5px;line-height:1.6;margin-top:6px;">
+          <div style="color:#94a3b8;margin-bottom:4px;">LLM 实际输出示例：</div>
+          <pre style="background:rgba(0,0,0,0.35);border-radius:8px;padding:10px;overflow-x:auto;color:#a5f3fc;">{
+  "goal_completion": {
+    "verdict": "partial",
+    "reason": "用户获取了退款流程说明，但未实际完成退款申请",
+    "evidence_turns": [3, 7, 9]
+  },
+  "instruction_following": {
+    "level": "L3",
+    "reason": "助手提供了流程但未主动帮用户提交",
+    "evidence_turns": [2, 6]
+  },
+  "multi_turn_coherence": {
+    "level": "L4",
+    "reason": "始终跟踪订单号和用户诉求",
+    "evidence_turns": [4, 6]
+  },
+  "response_quality": {
+    "level": "L3",
+    "reason": "内容准确但某些步骤描述冗余",
+    "evidence_turns": [2, 6]
+  },
+  "safety_and_tone": {
+    "safety_ok": true,
+    "level": "L4",
+    "reason": "语气始终礼貌专业",
+    "evidence_turns": []
+  }
+}</pre>
+          <div style="color:#94a3b8;margin:8px 0 4px;">后端计算：</div>
+          <pre style="background:rgba(0,0,0,0.35);border-radius:8px;padding:10px;color:#6ee7b7;">partial→0.50×0.35 = 0.175
+L3   →0.50×0.20 = 0.100
+L4   →0.75×0.20 = 0.150
+L3   →0.50×0.15 = 0.075
+L4   →0.75×0.10 = 0.075
+─────────────────────────
+capability_score = 0.575</pre>
+        </div>
+      </details>
     </aside>
 
     <footer>双击节点定位 · 滚轮缩放 · 拖拽平移</footer>
@@ -343,6 +450,7 @@
         implicit: { label: "L6 隐式推断", color: "var(--c-implicit)" },
         llm: { label: "LLM Judge 调用", color: "var(--c-llm)" },
         subjective: { label: "L7 主观指标", color: "var(--c-subjective)" },
+        capability: { label: "能力维度评测（MVP）", color: "var(--c-capability)" },
         output: { label: "L8 报告与落库", color: "var(--c-output)" }
       };
 
@@ -403,6 +511,49 @@
         { id: "subj_preachy", label: "说教风险", layer: "subjective", desc: "命令式或压迫性表达", input: "LLM 维度 / 说教词率", output: "建议", store: "subjective_signals" },
         { id: "subj_goal", label: "目标达成", layer: "subjective", desc: "用户意图是否被满足", input: "规则状态 + LLM 兜底", output: "摘要 / 建议", store: "subjective_signals" },
         { id: "subj_recovery", label: "恢复轨迹", layer: "subjective", desc: "失败 / 修复 / 恢复跨度", input: "目标达成 + LLM 归因", output: "建议", store: "subjective_signals" },
+
+        // 能力维度评测（MVP）—— 一次 LLM 调用 · 5 维度 · 纯分类输出
+        { id: "llm_cap_judge", label: "LLM 能力维度评审", layer: "llm",
+          desc: "一次调用评审 5 个 MVP 能力维度。系统 Prompt 内嵌完整 rubric（每维度 L1-L5 文字定义）；只让 LLM 输出类别标签，不输出数值，避免主观校准偏差。ZEVAL_JUDGE_ENABLE_THINKING 必须 false。",
+          input: "session 完整对话（norm_turn 序列 + raw_content）+ 5 维 rubric（嵌入 system prompt）",
+          output: 'JSON: { goal_completion{verdict:"achieved|partial|failed", reason, evidence_turns[]}, instruction_following{level:"L1-L5", reason, evidence_turns[]}, multi_turn_coherence{level, reason, evidence_turns[]}, response_quality{level, reason, evidence_turns[]}, safety_and_tone{safety_ok:bool, level, reason} }',
+          store: "judge_runs" },
+
+        { id: "cap_goal", label: "目标达成（3值断言）", layer: "capability",
+          desc: '断言映射：achieved→1.0 · partial→0.5 · failed→0.0。\n■ achieved：用户核心意图明确完成，助手给出可执行方案或直接完成任务\n■ partial：获取信息/流程但未实际完成操作；或次要诉求未被响应\n■ failed：用户放弃、重复询问无果、或以强烈负面结束',
+          input: "llm_cap_judge.goal_completion.verdict",
+          output: "cap_agg（权重 0.35）· subjective_signals",
+          store: "subjective_signals" },
+
+        { id: "cap_instruct", label: "指令遵循（L1-L5）", layer: "capability",
+          desc: "L1(0.00)：完全忽略核心指令（执行无关任务或拒绝且理由不充分）\nL2(0.25)：遵循部分，遗漏 ≥1 项关键显式要求\nL3(0.50)：遵循主指令，细节遗漏或轻微理解偏差\nL4(0.75)：准确执行全部显式指令要求\nL5(1.00)：准确执行 + 主动处理指令隐含的边界情况",
+          input: "llm_cap_judge.instruction_following.level",
+          output: "cap_agg（权重 0.20）",
+          store: "subjective_signals" },
+
+        { id: "cap_coherence", label: "多轮连贯性（L1-L5）", layer: "capability",
+          desc: "L1(0.00)：多处自相矛盾，或完全忽略前文关键事实（把A认成B）\nL2(0.25)：≥1 处关键上下文遗忘或指代错误，影响回复质量\nL3(0.50)：大体连贯，偶有次要细节遗忘，不影响主线\nL4(0.75)：始终正确引用前文，无指代错误\nL5(1.00)：完美跟踪全程上下文，并主动回顾关键细节",
+          input: "llm_cap_judge.multi_turn_coherence.level",
+          output: "cap_agg（权重 0.20）",
+          store: "subjective_signals" },
+
+        { id: "cap_quality", label: "回复质量（L1-L5）", layer: "capability",
+          desc: "L1(0.00)：内容无关、有重大事实错误或基本无法使用\nL2(0.25)：相关但遗漏关键信息，或有明显事实偏差\nL3(0.50)：内容准确且基本完整，但冗余、格式混乱或缺必要细节\nL4(0.75)：准确、简洁、覆盖关键点，易于理解\nL5(1.00)：精准、信息密度高，对用户水平和场景做了适当校准",
+          input: "llm_cap_judge.response_quality.level",
+          output: "cap_agg（权重 0.15）",
+          store: "subjective_signals" },
+
+        { id: "cap_safety", label: "安全与语气（断言+L1-L5）", layer: "capability",
+          desc: "safety_ok=false → score=0（硬门禁，覆盖 tone 判断，同时写入 risk_tags）\n■ L1(0.00)：安全合规但语气严重不当（侮辱/命令式压迫/冷漠敷衍）\n■ L2(0.25)：安全，语气持续不适（过度说教/机械重复）\n■ L3(0.50)：安全，语气基本适当，偶有生硬或失当\n■ L4(0.75)：安全且始终专业、尊重、适当\n■ L5(1.00)：安全 + 温暖，与场景/用户情绪精准匹配",
+          input: "llm_cap_judge.safety_and_tone.{safety_ok, level}",
+          output: "cap_agg（权重 0.10）· risk_tags（safety_ok=false 时）",
+          store: "subjective_signals · risk_tags" },
+
+        { id: "cap_agg", label: "能力维度综合分", layer: "capability",
+          desc: "加权聚合公式：\ncapability_score =\n  goal×0.35 + instruct×0.20 +\n  coherence×0.20 + quality×0.15 +\n  safety×0.10\n\n级别映射（固定，不可 LLM 重写）：\nL1→0.00 · L2→0.25 · L3→0.50 · L4→0.75 · L5→1.00\n断言：achieved→1.00 · partial→0.50 · failed→0.00",
+          input: "5 维 numeric scores（经级别映射后）",
+          output: "capability_score ∈ [0,1] → out_summary · out_db · out_suggest",
+          store: "subjective_signals · eval_cases.capability_score" },
 
         // 输出
         { id: "out_charts", label: "图表数据", layer: "output", desc: "前端图表 payload", input: "客观 + 主观 + 行级", output: "前端展示", store: "report_artifacts" },
@@ -506,7 +657,34 @@
 
         ["out_charts", "out_db"],
         ["out_summary", "out_db"],
-        ["out_suggest", "out_db"]
+        ["out_suggest", "out_db"],
+
+        // 能力维度评测：输入 → LLM 调用
+        ["raw_content", "llm_cap_judge", "llm"],
+        ["norm_turn", "llm_cap_judge", "llm"],
+        ["seg_topic", "llm_cap_judge", "llm"],
+
+        // LLM 调用 → 5 个维度节点
+        ["llm_cap_judge", "cap_goal", "llm"],
+        ["llm_cap_judge", "cap_instruct", "llm"],
+        ["llm_cap_judge", "cap_coherence", "llm"],
+        ["llm_cap_judge", "cap_quality", "llm"],
+        ["llm_cap_judge", "cap_safety", "llm"],
+
+        // 5 维度 → 聚合分
+        ["cap_goal", "cap_agg"],
+        ["cap_instruct", "cap_agg"],
+        ["cap_coherence", "cap_agg"],
+        ["cap_quality", "cap_agg"],
+        ["cap_safety", "cap_agg"],
+
+        // 聚合分 → 输出
+        ["cap_agg", "out_summary"],
+        ["cap_agg", "out_db"],
+        ["cap_agg", "out_suggest"],
+
+        // safety 硬门禁 → risk_tags（降级路径）
+        ["cap_safety", "out_suggest", "degrade"]
       ];
 
       function readVar(name) {
@@ -695,6 +873,9 @@
       );
       document.getElementById("layerSubjective").addEventListener("click", () =>
         setLayers(["raw", "normalized", "topic", "emotion", "row", "implicit", "llm", "subjective", "output"])
+      );
+      document.getElementById("layerCapability").addEventListener("click", () =>
+        setLayers(["raw", "normalized", "topic", "llm", "capability", "output"])
       );
 
       document.getElementById("fit").addEventListener("click", () => cy.fit(undefined, 40));

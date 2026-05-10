@@ -1,0 +1,15 @@
+0000000000000000000000000000000000000000 66a51a03e223967d6b8f0e1a5aa3394cd7e4e37d Roger Yang <yhr180414@163.com> 1777778378 +0800	reset: moving to origin/Zeval
+66a51a03e223967d6b8f0e1a5aa3394cd7e4e37d d9193e108c5be614abf679e51573642da54d7fc9 Roger Yang <yhr180414@163.com> 1777778397 +0800	commit: Align with DeepEval: 10 extended metrics, OTel trace ingest, synthesizer, SDK
+d9193e108c5be614abf679e51573642da54d7fc9 90522b72d1ad7018a3f569e1cbc99b962ccf50a8 Roger Yang <yhr180414@163.com> 1777783191 +0800	commit: Add eval copilot workflow
+90522b72d1ad7018a3f569e1cbc99b962ccf50a8 fd726fd71fea1355e25ca7a04b4df3a1293ecdf9 Roger Yang <yhr180414@163.com> 1777785031 +0800	commit: Refine Zeval navigation and chat UI
+fd726fd71fea1355e25ca7a04b4df3a1293ecdf9 b72e60f8f043d01d1e809809d58fc8254869da69 Roger Yang <yhr180414@163.com> 1777851760 +0800	commit: Document progress and harden Zeval MVP
+b72e60f8f043d01d1e809809d58fc8254869da69 76f60c2c75af4cea845f431c286e5713433e79f8 Roger Yang <yhr180414@163.com> 1777949632 +0800	commit: Align Zeval data scope with organizations and projects
+76f60c2c75af4cea845f431c286e5713433e79f8 115fc0aa1d6246e0109cd8de078e30a8dee28ed0 Roger Yang <yhr180414@163.com> 1777950009 +0800	commit: Stream evaluation stage progress
+115fc0aa1d6246e0109cd8de078e30a8dee28ed0 8ce10c8b46bd80bc4005bdfbb727c3e1b45755f7 Roger Yang <yhr180414@163.com> 1777950263 +0800	commit: Remove observability UI and add baseline trends
+8ce10c8b46bd80bc4005bdfbb727c3e1b45755f7 6684e15d5919825f297bc52d8d1b0b42d1ce3098 Roger Yang <yhr180414@163.com> 1777950564 +0800	commit: Emit remediation packages as skill bundles
+6684e15d5919825f297bc52d8d1b0b42d1ce3098 5d90ec02deae88b2379871dc721bc3aa87ac618c Roger Yang <yhr180414@163.com> 1777968248 +0800	commit: Harvest topic-level bad cases and read-only case pool UI
+5d90ec02deae88b2379871dc721bc3aa87ac618c d48118102a5e9c06a8d67cd7ac6c6ee0fba81ff3 Roger Yang <yhr180414@163.com> 1777968262 +0800	commit: Cluster summary cards into 4 groups with inline tooltips
+d48118102a5e9c06a8d67cd7ac6c6ee0fba81ff3 63a8370b8f6f812207a3df73a9cc761d605de8d7 Roger Yang <yhr180414@163.com> 1777968269 +0800	commit: Add Codex P0/P1/P2 prompt and seed user interview guide
+63a8370b8f6f812207a3df73a9cc761d605de8d7 fcb4d93015976459643fb3be1b398581c0e3ea23 Roger Yang <yhr180414@163.com> 1777993919 +0800	commit: Expand chat skills and view modes
+fcb4d93015976459643fb3be1b398581c0e3ea23 b407314ed2b67acef567068824425202994dcb64 Roger Yang <yhr180414@163.com> 1777993947 +0800	commit: Organize project documentation
+b407314ed2b67acef567068824425202994dcb64 b94ac6b035f08b3fb2a9d9116c4d73cf774e352b Roger Yang <yhr180414@163.com> 1778046879 +0800	commit: Harden judge flow and document integrations

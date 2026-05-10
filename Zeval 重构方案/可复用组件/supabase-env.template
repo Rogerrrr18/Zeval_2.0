@@ -1,0 +1,13 @@
+# Supabase browser metadata
+NEXT_PUBLIC_SUPABASE_URL=https://PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_PROJECT_REF=PROJECT_REF
+
+# Supabase/Postgres server-side writes
+DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres
+ZEVAL_DATABASE_ADAPTER=postgres
+ZEVAL_POSTGRES_SSL=require
+ZEVAL_POSTGRES_POOL_MAX=5
+
+# Target ref in the current project context
+# PROJECT_REF=rukjxsykowetriaxifon

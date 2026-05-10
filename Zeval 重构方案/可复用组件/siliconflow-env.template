@@ -1,0 +1,13 @@
+# Zeval LLM Judge (OpenAI-compatible gateway)
+ZEVAL_JUDGE_API_KEY=YOUR_API_KEY_HERE
+ZEVAL_JUDGE_BASE_URL=https://api.siliconflow.cn/v1
+
+# Default judge model. Qwen3.5-27B is a thinking model; thinking output MUST be disabled.
+ZEVAL_JUDGE_MODEL=Qwen/Qwen3.5-27B
+
+# Both flags MUST be false. Otherwise the model returns only reasoning_content and the JSON parse will fail.
+ZEVAL_JUDGE_ENABLE_THINKING=false
+SILICONFLOW_ENABLE_THINKING=false
+
+# Online eval default customer reply channel (mock-customer-api POST /reply)
+SILICONFLOW_CUSTOMER_API_URL=http://127.0.0.1:4200

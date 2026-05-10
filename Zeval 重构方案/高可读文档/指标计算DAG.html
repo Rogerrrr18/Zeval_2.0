@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zeval 主客观指标计算 DAG</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0f1620;
+        --panel: rgba(20, 28, 40, 0.92);
+        --panel-border: rgba(120, 144, 180, 0.25);
+        --text: #e7edf6;
+        --text-dim: #9aa6bb;
+        --accent: #4cb1ff;
+        --shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+
+        --c-raw: #5f7a99;
+        --c-norm: #608aa6;
+        --c-topic: #4f8aa1;
+        --c-emotion: #c66b86;
+        --c-row: #708ea3;
+        --c-objective: #3aa37a;
+        --c-implicit: #c98a2b;
+        --c-llm: #8a5cf2;
+        --c-subjective: #d35f7d;
+        --c-output: #1f86d6;
+
+        --edge-default: rgba(170, 188, 215, 0.55);
+        --edge-llm: rgba(170, 110, 255, 0.85);
+        --edge-degrade: rgba(212, 132, 64, 0.85);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background:
+          radial-gradient(1200px 700px at 80% -10%, rgba(99, 162, 240, 0.18), transparent 60%),
+          radial-gradient(900px 600px at -10% 110%, rgba(176, 76, 132, 0.15), transparent 65%),
+          var(--bg);
+        color: var(--text);
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        overflow: hidden;
+      }
+
+      header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        padding: 14px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: linear-gradient(180deg, rgba(15, 22, 32, 0.88), rgba(15, 22, 32, 0.4));
+        border-bottom: 1px solid var(--panel-border);
+        backdrop-filter: blur(8px);
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+
+      header .subtitle {
+        color: var(--text-dim);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .controls button {
+        font-family: inherit;
+        font-size: 12px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--panel-border);
+        padding: 6px 12px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: 0.2s ease;
+        user-select: none;
+      }
+
+      .controls button:hover {
+        background: rgba(76, 177, 255, 0.18);
+        border-color: rgba(76, 177, 255, 0.5);
+      }
+
+      .controls input[type="checkbox"] {
+        accent-color: var(--accent);
+      }
+
+      .layer-toggle {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--text);
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+      }
+
+      .layer-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--panel-border);
+        cursor: pointer;
+        user-select: none;
+        transition: 0.2s ease;
+      }
+
+      .layer-chip:hover {
+        border-color: rgba(76, 177, 255, 0.55);
+      }
+
+      .layer-chip.off {
+        opacity: 0.4;
+        text-decoration: line-through;
+      }
+
+      .layer-chip .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 4px;
+      }
+
+      .bulk-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .bulk-actions button {
+        font-size: 11px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--panel-border);
+        padding: 4px 10px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+
+      .bulk-actions button:hover {
+        background: rgba(76, 177, 255, 0.18);
+        border-color: rgba(76, 177, 255, 0.5);
+      }
+
+      #cy {
+        position: fixed;
+        top: 64px;
+        left: 0;
+        right: 320px;
+        bottom: 0;
+      }
+
+      aside.legend {
+        position: fixed;
+        right: 0;
+        top: 64px;
+        bottom: 0;
+        width: 320px;
+        padding: 18px 18px 24px;
+        background: var(--panel);
+        border-left: 1px solid var(--panel-border);
+        overflow-y: auto;
+        backdrop-filter: blur(10px);
+      }
+
+      aside.legend h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      aside.legend p {
+        margin: 0 0 12px;
+        color: var(--text-dim);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .detail {
+        margin-top: 8px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .detail .name {
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+
+      .detail .meta {
+        color: var(--text-dim);
+        margin-bottom: 6px;
+      }
+
+      .detail .row {
+        display: grid;
+        grid-template-columns: 60px 1fr;
+        gap: 8px;
+        margin: 4px 0;
+      }
+
+      .detail .row span:first-child {
+        color: var(--text-dim);
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.4px;
+      }
+
+      .edge-legend {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 0;
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      .edge-legend .line {
+        width: 28px;
+        height: 0;
+        border-top: 2px solid var(--edge-default);
+      }
+
+      .edge-legend .line.llm {
+        border-top: 2px dashed var(--edge-llm);
+      }
+
+      .edge-legend .line.degrade {
+        border-top: 2px dotted var(--edge-degrade);
+      }
+
+      footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        padding: 6px 16px;
+        font-size: 11px;
+        color: var(--text-dim);
+        font-family: "JetBrains Mono", monospace;
+        background: linear-gradient(0deg, rgba(15, 22, 32, 0.85), transparent);
+        z-index: 5;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(120, 144, 180, 0.3);
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Zeval 主客观指标计算 DAG</h1>
+        <div class="subtitle">原始 → 规范 → 主题 → 情绪 → 行级 → 客观/隐式 → 主观 → 报告</div>
+      </div>
+      <div class="controls">
+        <button id="fit">适应窗口</button>
+        <button id="reset">重置布局</button>
+      </div>
+    </header>
+
+    <div id="cy"></div>
+
+    <aside class="legend">
+      <h2>层级显隐</h2>
+      <p>点击层标签可单独显隐该层节点，便于聚焦特定环节。</p>
+      <div class="bulk-actions">
+        <button id="layerAll">全部显示</button>
+        <button id="layerNone">全部隐藏</button>
+        <button id="layerObjective">仅客观链路</button>
+        <button id="layerSubjective">仅主观链路</button>
+      </div>
+      <div class="layer-toggle" id="layerToggle"></div>
+
+      <h2>边的语义</h2>
+      <div class="edge-legend"><span class="line"></span>常规依赖</div>
+      <div class="edge-legend"><span class="line llm"></span>LLM 介入路径</div>
+      <div class="edge-legend"><span class="line degrade"></span>降级 / 兜底路径</div>
+
+      <h2>节点详情</h2>
+      <div id="nodeDetail" class="detail">
+        <div class="name">尚未选中节点</div>
+        <div class="meta">点击图中节点查看详情。</div>
+      </div>
+    </aside>
+
+    <footer>双击节点定位 · 滚轮缩放 · 拖拽平移</footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+    <script>
+      const LAYERS = {
+        raw: { label: "L0 原始层", color: "var(--c-raw)" },
+        normalized: { label: "L1 规范层", color: "var(--c-norm)" },
+        topic: { label: "L2 主题层", color: "var(--c-topic)" },
+        emotion: { label: "L3 情绪层", color: "var(--c-emotion)" },
+        row: { label: "L4 行级派生", color: "var(--c-row)" },
+        objective: { label: "L5 客观指标", color: "var(--c-objective)" },
+        implicit: { label: "L6 隐式推断", color: "var(--c-implicit)" },
+        llm: { label: "LLM Judge 调用", color: "var(--c-llm)" },
+        subjective: { label: "L7 主观指标", color: "var(--c-subjective)" },
+        output: { label: "L8 报告与落库", color: "var(--c-output)" }
+      };
+
+      const NODES = [
+        // 原始层
+        { id: "raw_session", label: "会话编号", layer: "raw", desc: "标识同一轮对话会话", input: "原始上传字段", output: "贯穿全链路", store: "sessions" },
+        { id: "raw_time", label: "消息时间", layer: "raw", desc: "消息发生时间，缺失时降级为顺序", input: "原始上传字段", output: "时序指标", store: "message_turns" },
+        { id: "raw_role", label: "消息角色", layer: "raw", desc: "user / assistant / system", input: "原始上传字段", output: "角色过滤", store: "message_turns" },
+        { id: "raw_content", label: "消息内容", layer: "raw", desc: "单条消息文本，PII 处理后入库", input: "原始上传字段", output: "文本规则与 LLM 输入", store: "message_turns" },
+
+        // 规范层
+        { id: "norm_turn", label: "轮次编号", layer: "normalized", desc: "session 内排序后的轮次序号", input: "raw 行 + 时间排序", output: "全部下游指标", store: "message_turns" },
+        { id: "norm_hour", label: "活跃小时", layer: "normalized", desc: "时间戳折算为小时", input: "消息时间", output: "活跃时段分布", store: "turn_enrichments" },
+
+        // 主题层
+        { id: "seg_topic", label: "主题分段", layer: "topic", desc: "session 内主题切片", input: "规范化行", output: "主题相关指标 / 主观评审", store: "topic_segments" },
+        { id: "llm_topic_continue", label: "LLM 主题连续性复核", layer: "llm", desc: "长间隔时复核是否延续上一主题", input: "相邻主题上下文", output: "主题分段置信度", store: "judge_runs" },
+
+        // 情绪层
+        { id: "llm_emotion_base", label: "LLM 分段情绪基准", layer: "llm", desc: "对每个主题段给出情绪基准分", input: "主题段对话", output: "情绪基准分 / 证据", store: "judge_runs" },
+        { id: "rule_emotion", label: "规则情绪权重", layer: "emotion", desc: "本地正负向、长度、节奏、风格、恢复、风险权重", input: "段内行级文本与节奏", output: "情绪修正项", store: "topic_segments.emotion_payload" },
+        { id: "emo_score", label: "最终情绪分", layer: "emotion", desc: "基准分叠加本地权重得到的可解释情绪分", input: "情绪基准 + 规则权重", output: "情绪曲线 / 恢复 / 隐式信号", store: "topic_segments.emotion_payload" },
+
+        // 行级派生
+        { id: "row_gap", label: "响应间隔", layer: "row", desc: "相邻消息时间差", input: "消息时间", output: "客观节奏 / 兴趣下降信号", store: "turn_enrichments" },
+        { id: "row_question", label: "是否提问", layer: "row", desc: "用户消息是否为问句", input: "消息内容", output: "提问率 / 理解障碍", store: "turn_enrichments" },
+        { id: "row_switch", label: "是否主题切换", layer: "row", desc: "相邻行 topicSegmentId 是否变化", input: "主题分段", output: "主题切换率 / 答非所问", store: "turn_enrichments" },
+        { id: "row_dropoff", label: "是否断点", layer: "row", desc: "末轮且为 assistant 的标记", input: "轮次 + 角色", output: "流失轮次分布", store: "turn_enrichments" },
+        { id: "row_token", label: "Token 估算", layer: "row", desc: "按字符数近似估算", input: "消息内容", output: "成本估算", store: "turn_enrichments" },
+
+        // 客观指标
+        { id: "obj_depth", label: "会话深度分布", layer: "objective", desc: "按 session 最大轮次分桶", input: "轮次编号", output: "图表 / 摘要", store: "objective_signals" },
+        { id: "obj_dropoff", label: "流失轮次分布", layer: "objective", desc: "断点出现的轮次直方图", input: "是否断点", output: "断点图", store: "objective_signals" },
+        { id: "obj_gap", label: "平均响应间隔", layer: "objective", desc: "全表有效响应间隔均值", input: "响应间隔", output: "节奏建议", store: "objective_signals" },
+        { id: "obj_active", label: "活跃时段分布", layer: "objective", desc: "按小时计数", input: "活跃小时", output: "活跃时段图", store: "objective_signals" },
+        { id: "obj_switch", label: "主题切换率", layer: "objective", desc: "session 内主题段切换次数", input: "主题分段", output: "建议 / 摘要", store: "objective_signals" },
+        { id: "obj_qrate", label: "用户提问率", layer: "objective", desc: "用户问句占比", input: "是否提问 + 角色", output: "建议", store: "objective_signals" },
+        { id: "obj_ulen", label: "用户平均消息长度", layer: "objective", desc: "用户消息长度均值", input: "用户消息内容", output: "参与度判断", store: "objective_signals" },
+        { id: "obj_alen", label: "AI 平均消息长度", layer: "objective", desc: "AI 消息长度均值", input: "AI 消息内容", output: "说教风险参考", store: "objective_signals" },
+        { id: "obj_trend", label: "用户长度趋势", layer: "objective", desc: "用户消息长度的线性斜率", input: "用户消息长度序列", output: "兴趣变化辅助判断", store: "objective_signals" },
+
+        // 隐式推断
+        { id: "imp_interest", label: "兴趣下降风险", layer: "implicit", desc: "前后段长度、间隔、提问率综合", input: "用户行为时序", output: "Judge 上下文 / 建议", store: "risk_tags" },
+        { id: "imp_understand", label: "理解障碍风险", layer: "implicit", desc: "困惑表达 / 重复问 / 切题失败", input: "用户问题与切换", output: "答非所问 / 建议", store: "risk_tags" },
+        { id: "imp_recovery", label: "情绪恢复失败风险", layer: "implicit", desc: "低情绪持续且无恢复", input: "情绪分 + 断点", output: "恢复轨迹 / 建议", store: "risk_tags" },
+
+        // 主观 LLM
+        { id: "llm_dimension", label: "LLM 主观四维评审", layer: "llm", desc: "共情 / 追问 / 答非所问 / 说教", input: "session transcript + 隐式信号", output: "主观维度结构化输出", store: "judge_runs" },
+        { id: "llm_goal", label: "LLM 目标达成评审", layer: "llm", desc: "规则不清晰时调用", input: "session transcript", output: "目标达成结构化输出", store: "judge_runs" },
+        { id: "llm_recovery", label: "LLM 恢复轨迹归因", layer: "llm", desc: "对完成的恢复轨迹归因", input: "失败 / 恢复跨度", output: "策略 + 质量 + 证据", store: "judge_runs" },
+
+        // 主观指标
+        { id: "subj_curve", label: "情绪曲线", layer: "subjective", desc: "按轮次绘制的情绪走势", input: "最终情绪分", output: "图表 / 摘要", store: "subjective_signals" },
+        { id: "subj_turn", label: "情绪拐点", layer: "subjective", desc: "情绪明显上升或下降的轮次", input: "情绪分差", output: "复盘 / 建议", store: "subjective_signals" },
+        { id: "subj_empathy", label: "共情程度", layer: "subjective", desc: "AI 是否理解、接纳、安抚", input: "LLM 维度 / 共情命中率", output: "摘要 / 建议", store: "subjective_signals" },
+        { id: "subj_followup", label: "追问有效性", layer: "subjective", desc: "AI 是否有效引导与确认", input: "LLM 维度 / 提问率 / 解决态", output: "建议", store: "subjective_signals" },
+        { id: "subj_offtopic", label: "答非所问风险", layer: "subjective", desc: "是否偏题或忽视用户重点", input: "LLM 维度 / 主题切换 / 理解障碍", output: "建议 / badcase", store: "subjective_signals" },
+        { id: "subj_preachy", label: "说教风险", layer: "subjective", desc: "命令式或压迫性表达", input: "LLM 维度 / 说教词率", output: "建议", store: "subjective_signals" },
+        { id: "subj_goal", label: "目标达成", layer: "subjective", desc: "用户意图是否被满足", input: "规则状态 + LLM 兜底", output: "摘要 / 建议", store: "subjective_signals" },
+        { id: "subj_recovery", label: "恢复轨迹", layer: "subjective", desc: "失败 / 修复 / 恢复跨度", input: "目标达成 + LLM 归因", output: "建议", store: "subjective_signals" },
+
+        // 输出
+        { id: "out_charts", label: "图表数据", layer: "output", desc: "前端图表 payload", input: "客观 + 主观 + 行级", output: "前端展示", store: "report_artifacts" },
+        { id: "out_summary", label: "摘要卡", layer: "output", desc: "首页核心指标卡", input: "客观 + 主观", output: "前端展示", store: "evaluation_runs.report_payload" },
+        { id: "out_suggest", label: "优化建议", layer: "output", desc: "问题 → 影响 → 行动", input: "客观 + 隐式 + 主观", output: "前端 / 调优包", store: "suggestions" },
+        { id: "out_db", label: "Supabase 落库", layer: "output", desc: "信号 / 证据 / 建议入库", input: "全部计算产物", output: "可追溯质量信号仓库", store: "evaluation_runs / signals / evidence" }
+      ];
+
+      const EDGES = [
+        // raw -> norm
+        ["raw_session", "norm_turn"],
+        ["raw_time", "norm_turn"],
+        ["raw_time", "norm_hour"],
+        ["raw_role", "norm_turn"],
+        ["raw_content", "norm_turn"],
+
+        // norm -> topic
+        ["norm_turn", "seg_topic"],
+        ["raw_content", "seg_topic"],
+        ["seg_topic", "llm_topic_continue", "llm"],
+        ["llm_topic_continue", "seg_topic", "llm"],
+
+        // topic -> emotion
+        ["seg_topic", "llm_emotion_base", "llm"],
+        ["seg_topic", "rule_emotion"],
+        ["llm_emotion_base", "emo_score", "llm"],
+        ["rule_emotion", "emo_score", "degrade"],
+
+        // norm/topic -> row 派生
+        ["raw_time", "row_gap"],
+        ["raw_content", "row_question"],
+        ["seg_topic", "row_switch"],
+        ["norm_turn", "row_dropoff"],
+        ["raw_role", "row_dropoff"],
+        ["raw_content", "row_token"],
+
+        // 客观
+        ["norm_turn", "obj_depth"],
+        ["row_dropoff", "obj_dropoff"],
+        ["row_gap", "obj_gap"],
+        ["norm_hour", "obj_active"],
+        ["seg_topic", "obj_switch"],
+        ["row_question", "obj_qrate"],
+        ["raw_role", "obj_qrate"],
+        ["raw_content", "obj_ulen"],
+        ["raw_content", "obj_alen"],
+        ["obj_ulen", "obj_trend"],
+
+        // 隐式
+        ["row_gap", "imp_interest"],
+        ["obj_ulen", "imp_interest"],
+        ["row_question", "imp_interest"],
+        ["row_question", "imp_understand"],
+        ["row_switch", "imp_understand"],
+        ["raw_content", "imp_understand"],
+        ["emo_score", "imp_recovery"],
+        ["row_dropoff", "imp_recovery"],
+
+        // 主观 LLM
+        ["seg_topic", "llm_dimension", "llm"],
+        ["imp_interest", "llm_dimension", "llm"],
+        ["imp_understand", "llm_dimension", "llm"],
+        ["imp_recovery", "llm_dimension", "llm"],
+        ["seg_topic", "llm_goal", "llm"],
+        ["seg_topic", "llm_recovery", "llm"],
+
+        // 主观指标
+        ["emo_score", "subj_curve"],
+        ["subj_curve", "subj_turn"],
+        ["llm_dimension", "subj_empathy", "llm"],
+        ["llm_dimension", "subj_followup", "llm"],
+        ["llm_dimension", "subj_offtopic", "llm"],
+        ["llm_dimension", "subj_preachy", "llm"],
+        ["imp_understand", "subj_offtopic", "degrade"],
+        ["row_switch", "subj_offtopic", "degrade"],
+        ["llm_goal", "subj_goal", "llm"],
+        ["row_question", "subj_goal", "degrade"],
+        ["subj_goal", "subj_recovery"],
+        ["llm_recovery", "subj_recovery", "llm"],
+        ["imp_recovery", "subj_recovery", "degrade"],
+
+        // 输出
+        ["obj_depth", "out_charts"],
+        ["obj_dropoff", "out_charts"],
+        ["obj_active", "out_charts"],
+        ["obj_switch", "out_charts"],
+        ["subj_curve", "out_charts"],
+        ["subj_turn", "out_charts"],
+
+        ["obj_gap", "out_summary"],
+        ["obj_qrate", "out_summary"],
+        ["subj_empathy", "out_summary"],
+        ["subj_goal", "out_summary"],
+
+        ["imp_interest", "out_suggest"],
+        ["imp_understand", "out_suggest"],
+        ["imp_recovery", "out_suggest"],
+        ["subj_offtopic", "out_suggest"],
+        ["subj_preachy", "out_suggest"],
+        ["subj_recovery", "out_suggest"],
+
+        ["out_charts", "out_db"],
+        ["out_summary", "out_db"],
+        ["out_suggest", "out_db"]
+      ];
+
+      function readVar(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+
+      const layerColor = {};
+      Object.keys(LAYERS).forEach((k) => {
+        layerColor[k] = readVar(LAYERS[k].color.replace("var(", "").replace(")", ""));
+      });
+
+      cytoscape.use(window.cytoscapeDagre);
+
+      const elements = [
+        ...NODES.map((n) => ({
+          data: { ...n, color: layerColor[n.layer] }
+        })),
+        ...EDGES.map(([s, t, type]) => ({
+          data: { id: `${s}__${t}`, source: s, target: t, type: type || "default" }
+        }))
+      ];
+
+      const cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements,
+        wheelSensitivity: 0.3,
+        layout: {
+          name: "dagre",
+          rankDir: "TB",
+          nodeSep: 32,
+          edgeSep: 18,
+          rankSep: 70
+        },
+        style: [
+          {
+            selector: "node",
+            style: {
+              "background-color": "data(color)",
+              "background-opacity": 0.9,
+              label: "data(label)",
+              color: "#fff",
+              "font-family": "Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif",
+              "font-size": 12,
+              "font-weight": 500,
+              "text-valign": "center",
+              "text-halign": "center",
+              "text-wrap": "wrap",
+              "text-max-width": 120,
+              "text-outline-color": "#0f1620",
+              "text-outline-width": 1,
+              shape: "round-rectangle",
+              width: "label",
+              height: 32,
+              padding: "10px",
+              "border-width": 1,
+              "border-color": "rgba(255,255,255,0.18)"
+            }
+          },
+          {
+            selector: 'node[layer = "llm"]',
+            style: {
+              shape: "round-diamond",
+              "border-color": "rgba(255,255,255,0.4)",
+              "border-width": 2,
+              "background-opacity": 1
+            }
+          },
+          {
+            selector: 'node[layer = "output"]',
+            style: {
+              shape: "round-tag",
+              "border-width": 2
+            }
+          },
+          {
+            selector: "node:selected",
+            style: {
+              "border-color": "#4cb1ff",
+              "border-width": 3,
+              "background-blacken": -0.15
+            }
+          },
+          {
+            selector: "edge",
+            style: {
+              width: 1.4,
+              "line-color": "rgba(170, 188, 215, 0.55)",
+              "target-arrow-color": "rgba(170, 188, 215, 0.55)",
+              "target-arrow-shape": "triangle-backcurve",
+              "curve-style": "bezier",
+              "arrow-scale": 0.9,
+              opacity: 0.85
+            }
+          },
+          {
+            selector: 'edge[type = "llm"]',
+            style: {
+              "line-color": "rgba(170, 110, 255, 0.85)",
+              "target-arrow-color": "rgba(170, 110, 255, 0.85)",
+              "line-style": "dashed",
+              width: 1.6
+            }
+          },
+          {
+            selector: 'edge[type = "degrade"]',
+            style: {
+              "line-color": "rgba(212, 132, 64, 0.85)",
+              "target-arrow-color": "rgba(212, 132, 64, 0.85)",
+              "line-style": "dotted",
+              width: 1.6
+            }
+          },
+          {
+            selector: ".faded",
+            style: { opacity: 0.08 }
+          },
+          {
+            selector: ".highlight",
+            style: { opacity: 1, "z-index": 999 }
+          }
+        ]
+      });
+
+      const LAYER_STATE = {};
+      Object.keys(LAYERS).forEach((k) => (LAYER_STATE[k] = true));
+
+      function buildLayerToggles() {
+        const root = document.getElementById("layerToggle");
+        root.innerHTML = "";
+        Object.entries(LAYERS).forEach(([key, val]) => {
+          const chip = document.createElement("span");
+          chip.className = "layer-chip";
+          chip.dataset.layer = key;
+          const sw = document.createElement("span");
+          sw.className = "swatch";
+          sw.style.background = layerColor[key];
+          chip.appendChild(sw);
+          const text = document.createElement("span");
+          text.textContent = val.label;
+          chip.appendChild(text);
+          chip.addEventListener("click", () => {
+            LAYER_STATE[key] = !LAYER_STATE[key];
+            chip.classList.toggle("off", !LAYER_STATE[key]);
+            applyVisibility();
+          });
+          root.appendChild(chip);
+        });
+      }
+
+      function syncLayerChips() {
+        document.querySelectorAll(".layer-chip").forEach((chip) => {
+          const key = chip.dataset.layer;
+          chip.classList.toggle("off", !LAYER_STATE[key]);
+        });
+      }
+
+      function applyVisibility() {
+        cy.batch(() => {
+          cy.nodes().forEach((n) => {
+            const layer = n.data("layer");
+            const visible = LAYER_STATE[layer] !== false;
+            n.style("display", visible ? "element" : "none");
+          });
+          cy.edges().forEach((e) => {
+            const sHidden = e.source().style("display") === "none";
+            const tHidden = e.target().style("display") === "none";
+            e.style("display", sHidden || tHidden ? "none" : "element");
+          });
+        });
+      }
+
+      function setLayers(activeKeys) {
+        Object.keys(LAYER_STATE).forEach((k) => {
+          LAYER_STATE[k] = activeKeys.includes(k);
+        });
+        syncLayerChips();
+        applyVisibility();
+      }
+
+      buildLayerToggles();
+
+      document.getElementById("layerAll").addEventListener("click", () => setLayers(Object.keys(LAYERS)));
+      document.getElementById("layerNone").addEventListener("click", () => setLayers([]));
+      document.getElementById("layerObjective").addEventListener("click", () =>
+        setLayers(["raw", "normalized", "topic", "row", "objective", "output"])
+      );
+      document.getElementById("layerSubjective").addEventListener("click", () =>
+        setLayers(["raw", "normalized", "topic", "emotion", "row", "implicit", "llm", "subjective", "output"])
+      );
+
+      document.getElementById("fit").addEventListener("click", () => cy.fit(undefined, 40));
+      document.getElementById("reset").addEventListener("click", () => {
+        cy.layout({ name: "dagre", rankDir: "TB", nodeSep: 32, edgeSep: 18, rankSep: 70 }).run();
+      });
+
+      function showDetail(node) {
+        const d = node.data();
+        const html = `
+          <div class="name">${d.label}</div>
+          <div class="meta">
+            <span class="pill" style="background:${d.color};color:#fff;">${LAYERS[d.layer].label}</span>
+          </div>
+          <div class="row"><span>用途</span><span>${d.desc || "-"}</span></div>
+          <div class="row"><span>输入</span><span>${d.input || "-"}</span></div>
+          <div class="row"><span>输出</span><span>${d.output || "-"}</span></div>
+          <div class="row"><span>落点</span><span>${d.store || "-"}</span></div>
+        `;
+        document.getElementById("nodeDetail").innerHTML = html;
+      }
+
+      cy.on("tap", "node", (evt) => {
+        const node = evt.target;
+        cy.elements().removeClass("highlight").addClass("faded");
+        const neighborhood = node.closedNeighborhood();
+        neighborhood.removeClass("faded").addClass("highlight");
+        showDetail(node);
+      });
+
+      cy.on("tap", (evt) => {
+        if (evt.target === cy) {
+          cy.elements().removeClass("faded").removeClass("highlight");
+        }
+      });
+
+      cy.on("dblclick", "node", (evt) => {
+        cy.animate({ center: { eles: evt.target }, zoom: Math.max(cy.zoom(), 1.1) }, { duration: 400 });
+      });
+
+      cy.ready(() => {
+        cy.fit(undefined, 40);
+      });
+    </script>
+  </body>
+</html>

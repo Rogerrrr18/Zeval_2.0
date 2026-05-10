@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zeval 项目导览 · 重构方案</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0c1320;
+        --panel: rgba(20, 28, 40, 0.86);
+        --panel-strong: rgba(20, 28, 40, 0.96);
+        --border: rgba(120, 144, 180, 0.22);
+        --text: #e7edf6;
+        --text-dim: #97a2b8;
+        --accent: #4cb1ff;
+        --accent-soft: rgba(76, 177, 255, 0.16);
+        --good: #3aa37a;
+        --warn: #c98a2b;
+        --bad: #d35f7d;
+        --llm: #8a5cf2;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background:
+          radial-gradient(1200px 700px at 80% -10%, rgba(99, 162, 240, 0.18), transparent 60%),
+          radial-gradient(900px 600px at -10% 110%, rgba(176, 76, 132, 0.15), transparent 65%),
+          var(--bg);
+        color: var(--text);
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.7;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+        max-width: 1240px;
+        margin: 0 auto;
+      }
+
+      nav.toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        padding: 28px 16px 28px 24px;
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+      }
+
+      nav.toc h1 {
+        font-size: 16px;
+        margin: 0 0 4px;
+        letter-spacing: 0.4px;
+      }
+      nav.toc .sub {
+        color: var(--text-dim);
+        font-size: 12px;
+        margin-bottom: 18px;
+      }
+      nav.toc ol { padding-left: 18px; margin: 0; }
+      nav.toc li { margin: 6px 0; font-size: 13px; }
+      nav.toc a {
+        color: var(--text);
+        text-decoration: none;
+        opacity: 0.78;
+        transition: 0.2s ease;
+      }
+      nav.toc a:hover { opacity: 1; color: var(--accent); }
+
+      main {
+        padding: 40px 36px 80px;
+      }
+
+      section {
+        margin-bottom: 56px;
+        scroll-margin-top: 24px;
+      }
+
+      .hero {
+        padding: 36px 32px;
+        background: linear-gradient(135deg, rgba(76, 177, 255, 0.12), rgba(138, 92, 242, 0.12));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        position: relative;
+        overflow: hidden;
+        margin-bottom: 36px;
+        box-shadow: var(--shadow);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -120px;
+        top: -120px;
+        width: 320px;
+        height: 320px;
+        background: radial-gradient(closest-side, rgba(76, 177, 255, 0.32), transparent 70%);
+        filter: blur(10px);
+      }
+      .hero h1 {
+        font-size: 28px;
+        margin: 0 0 8px;
+        letter-spacing: 0.5px;
+        position: relative;
+      }
+      .hero .lead {
+        color: var(--text-dim);
+        font-size: 15px;
+        max-width: 720px;
+        position: relative;
+      }
+      .hero .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+        position: relative;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--text);
+      }
+      .pill.accent { background: var(--accent-soft); border-color: rgba(76, 177, 255, 0.4); }
+      .pill.good { background: rgba(58, 163, 122, 0.18); border-color: rgba(58, 163, 122, 0.5); }
+      .pill.warn { background: rgba(201, 138, 43, 0.18); border-color: rgba(201, 138, 43, 0.5); }
+      .pill.llm { background: rgba(138, 92, 242, 0.18); border-color: rgba(138, 92, 242, 0.5); }
+      .pill.bad { background: rgba(211, 95, 125, 0.18); border-color: rgba(211, 95, 125, 0.5); }
+
+      h2 {
+        font-size: 20px;
+        margin: 0 0 14px;
+        letter-spacing: 0.4px;
+      }
+      h3 {
+        font-size: 15px;
+        margin: 22px 0 8px;
+        color: var(--text);
+      }
+
+      p, li { color: var(--text); font-size: 14px; }
+      .dim { color: var(--text-dim); }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+        .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 20px;
+      }
+      .card h4 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        letter-spacing: 0.3px;
+      }
+      .card p { margin: 0; color: var(--text-dim); font-size: 13px; }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 16px;
+        margin: 20px 0 8px;
+      }
+      .timeline .stage {
+        font-family: "JetBrains Mono", monospace;
+        color: var(--accent);
+        font-size: 13px;
+        border-left: 2px solid rgba(76, 177, 255, 0.4);
+        padding-left: 10px;
+      }
+      .timeline .body { color: var(--text); font-size: 14px; }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0 4px;
+        font-size: 13px;
+      }
+      th, td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+        font-weight: 600;
+      }
+      td.dim { color: var(--text-dim); }
+
+      .callout {
+        margin: 18px 0;
+        padding: 14px 16px;
+        border-radius: 12px;
+        background: rgba(76, 177, 255, 0.08);
+        border: 1px solid rgba(76, 177, 255, 0.3);
+        font-size: 13px;
+      }
+      .callout.warn {
+        background: rgba(201, 138, 43, 0.1);
+        border-color: rgba(201, 138, 43, 0.4);
+      }
+      .callout.bad {
+        background: rgba(211, 95, 125, 0.1);
+        border-color: rgba(211, 95, 125, 0.4);
+      }
+      .callout strong { color: var(--text); }
+
+      .flow {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0;
+      }
+      .flow .step {
+        flex: 1 1 140px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 13px;
+        position: relative;
+        min-width: 140px;
+      }
+      .flow .step .num {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+      .flow .arrow {
+        align-self: center;
+        color: var(--text-dim);
+        font-size: 18px;
+      }
+
+      code, kbd {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      pre {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        line-height: 1.6;
+      }
+
+      .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      .badge.good { color: #6cd5a8; border-color: rgba(58, 163, 122, 0.5); }
+      .badge.warn { color: #f0b96a; border-color: rgba(201, 138, 43, 0.5); }
+      .badge.llm { color: #c2a8ff; border-color: rgba(138, 92, 242, 0.55); }
+      .badge.bad { color: #f4a0b6; border-color: rgba(211, 95, 125, 0.5); }
+
+      a.linkbtn {
+        display: inline-block;
+        margin: 4px 0;
+        padding: 6px 12px;
+        background: var(--accent-soft);
+        border: 1px solid rgba(76, 177, 255, 0.4);
+        border-radius: 999px;
+        color: var(--text);
+        text-decoration: none;
+        font-size: 13px;
+        transition: 0.2s ease;
+      }
+      a.linkbtn:hover { background: rgba(76, 177, 255, 0.28); }
+
+      footer {
+        padding: 24px 0;
+        text-align: center;
+        color: var(--text-dim);
+        font-size: 12px;
+        border-top: 1px solid var(--border);
+        margin-top: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav class="toc">
+        <h1>Zeval 项目导览</h1>
+        <div class="sub">为新人理解项目而写</div>
+        <ol>
+          <li><a href="#what">这是个什么项目</a></li>
+          <li><a href="#loop">北极星闭环</a></li>
+          <li><a href="#users">用户与典型旅程</a></li>
+          <li><a href="#concepts">关键概念</a></li>
+          <li><a href="#status">当前实现速览</a></li>
+          <li><a href="#why">为什么要重构</a></li>
+          <li><a href="#stance">重构核心口径</a></li>
+          <li><a href="#keep">保留的核心功能</a></li>
+          <li><a href="#change">替换或删除的内容</a></li>
+          <li><a href="#layers">目标分层</a></li>
+          <li><a href="#metrics">主客观指标体系</a></li>
+          <li><a href="#data">数据流转</a></li>
+          <li><a href="#backend">后端方案</a></li>
+          <li><a href="#api">API 与 LLM 契约</a></li>
+          <li><a href="#fe">前端展示约束</a></li>
+          <li><a href="#test">测试与回归</a></li>
+          <li><a href="#extras">新规划能力</a></li>
+          <li><a href="#path">实施路线</a></li>
+          <li><a href="#docs">文档与产物索引</a></li>
+        </ol>
+      </nav>
+
+      <main>
+        <section id="changelog" style="background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.25);border-radius:18px;padding:28px 32px;margin-bottom:8px;">
+          <h2 style="margin-top:0;font-size:1.1rem;letter-spacing:.04em;color:#a5b4fc;">▸ v2.1 改动说明（2026-05-10）</h2>
+          <p style="color:#94a3b8;font-size:14px;margin-bottom:18px;">本次迭代在原有"评估 + 复盘 + 调优"主链路基础上，新增三处系统性改动。MVP 聚焦<strong style="color:#e2e8f0;">对话智能体评测</strong>主链路（P1–P3）；harness 层归因、Copilot 决策、泛化验证为 <span style="color:#fbbf24;">Phase 2（P4+）</span> 规划。</p>
+
+          <div style="display:flex;flex-direction:column;gap:14px;">
+
+            <div style="background:rgba(15,23,42,0.6);border-left:3px solid #6366f1;border-radius:0 12px 12px 0;padding:16px 20px;">
+              <div style="font-weight:700;color:#e2e8f0;margin-bottom:6px;">① 能力维度评测体系（新增 <a href="../重构方案梳理/15-能力维度评测与归因.md" style="color:#818cf8;">15 号文档</a>）— <span style="color:#fbbf24;font-size:12px;">MVP：维度可选标注 / Phase 2：harness 归因</span></div>
+              <p style="margin:0;color:#94a3b8;font-size:14px;line-height:1.7;">评测集主维度从"症状标签"切换为 <strong style="color:#c7d2fe;">12 个能力维度</strong>（instruction_following / multi_turn_coherence / tool_calling_correctness 等）。MVP 阶段 <code style="color:#a5b4fc;">capability_dimension</code> 为可选标注，支持按维度过滤案例池。<strong style="color:#fbbf24;">Phase 2（P4+）</strong> 再启用 <strong style="color:#c7d2fe;">9 层 Canonical Harness</strong>（L0 模型底座 → L8 最终合成）的强制归因，届时 Copilot 新增 4 个决策 skill，实现「痛点描述 → 能力定向 → 故障层归因 → 优化路径推荐」全链路。</p>
+            </div>
+
+            <div style="background:rgba(15,23,42,0.6);border-left:3px solid #38bdf8;border-radius:0 12px 12px 0;padding:16px 20px;">
+              <div style="font-weight:700;color:#e2e8f0;margin-bottom:6px;">② 评测集 6+2 类信号通道（完善 <a href="../重构方案梳理/13-案例池自动入池规则.md" style="color:#818cf8;">13 号文档</a>）</div>
+              <p style="margin:0;color:#94a3b8;font-size:14px;line-height:1.7;">案例池不再只收"确认坏的对话"，按混淆矩阵四象限建立 <strong style="color:#c7d2fe;">8 类 source 通道</strong>：<code style="color:#7dd3fc;">auto_tp</code>（真坏）/ <code style="color:#7dd3fc;">manual_fp</code>（假阳性转正例）/ <code style="color:#7dd3fc;">auto_fn</code>（系统漏报）/ <code style="color:#7dd3fc;">auto_tn</code>（金标正例）/ <code style="color:#7dd3fc;">auto_uncertainty</code>（边界）/ <code style="color:#7dd3fc;">auto_disagreement</code>（评估器分歧）/ <code style="color:#7dd3fc;">synthesized</code> / <code style="color:#7dd3fc;">imported</code>。每个能力维度独立维护这组 8 类信号（不共用桶），是 Calibration 与归因决策的最小可信单元。</p>
+            </div>
+
+            <div style="background:rgba(15,23,42,0.6);border-left:3px solid #34d399;border-radius:0 12px 12px 0;padding:16px 20px;">
+              <div style="font-weight:700;color:#e2e8f0;margin-bottom:6px;">③ 泛化验证机制 M1–M5（完善 <a href="../重构方案梳理/11-测试与回归.md" style="color:#818cf8;">11 号文档</a> 11.12 节）— <span style="color:#fbbf24;font-size:12px;">Phase 2（P4+）规划，MVP 不实施</span></div>
+              <p style="margin:0;color:#94a3b8;font-size:14px;line-height:1.7;">原有 validation 只能证明"在见过的 badcase 上改善了"，无法保证能力泛化（举一反三）。M1–M5 填补这个空缺（<strong style="color:#fbbf24;">Phase 2 P4+</strong> 上线）：<strong style="color:#c7d2fe;">M1</strong> Seen/Holdout 强制分离（30% holdout 修复者不可见，gen_coeff 衡量泛化度）；<strong style="color:#c7d2fe;">M2</strong> 最小样本量门禁（N &lt; 10 只输出 INSUFFICIENT_EVIDENCE）；<strong style="color:#c7d2fe;">M3</strong> 合成变体探针（同能力跨场景变体注入 holdout）；<strong style="color:#c7d2fe;">M4</strong> 跨能力回归 Guard（防止修好 A 搞坏 B）；<strong style="color:#c7d2fe;">M5</strong> Paired Bootstrap CI（ci_95_lower ≤ 0 不通过门禁）。相关表/字段已在 schema 中预留，MVP 阶段不写入数据。</p>
+            </div>
+
+          </div>
+        </section>
+
+        <section class="hero">
+          <h1>Zeval 是把对话日志变成可解释质量指标的评估工作台</h1>
+          <p class="lead">
+            它接收 AI 对话日志，做字段补全与主题切分，再用规则与 LLM Judge 给出客观与主观指标，并把不达预期的会话（以及假阳性误判、漏报、边界案例）沉淀成多来源的评测集，最终驱动 Agent 真正变好。本页帮新人在不读源码的前提下理解项目背景、当前能力、为什么要重构以及目标态。
+          </p>
+          <div class="pill-row">
+            <span class="pill accent">Next.js + TypeScript</span>
+            <span class="pill">App Router</span>
+            <span class="pill llm">LLM Judge · Qwen3.5-27B</span>
+            <span class="pill good">Supabase 唯一后端</span>
+            <span class="pill">Skill 化调优包</span>
+            <span class="pill warn">MVP 阶段</span>
+          </div>
+        </section>
+
+        <section id="what">
+          <h2>1. 这是个什么项目</h2>
+          <p>
+            Zeval 是面向 AI 对话产品的「评估 + 复盘 + 调优」工作台。它处理上传或接入的对话日志，输出可解释的指标、证据片段、可执行优化建议、badcase 与回归用例，并支持与基线（baseline）对比、在线回放、调优包生成。
+          </p>
+          <div class="grid-3" style="margin-top: 16px;">
+            <div class="card">
+              <h4>评估</h4>
+              <p>客观指标 + LLM 主观评审 + 隐式风险信号，给出统一结构化结果。</p>
+            </div>
+            <div class="card">
+              <h4>复盘</h4>
+              <p>基线沉淀、在线回放对比、badcase 收获，让"为什么变差"可追溯。</p>
+            </div>
+            <div class="card">
+              <h4>调优</h4>
+              <p>调优包（issue-brief / spec / badcases / acceptance-gate）驱动 Agent 修复并回归验证。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="loop">
+          <h2>2. 北极星闭环</h2>
+          <div class="flow">
+            <div class="step"><div class="num">01</div>上传对话日志</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">02</div>解析与字段补全</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">03</div>主题切分与情绪基准</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">04</div>客观 + 主观评估</div>
+          </div>
+          <div class="flow">
+            <div class="step"><div class="num">05</div>图表 / 证据 / 建议</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">06</div>baseline 沉淀</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">07</div>调优包 + Agent 执行</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">08</div>在线回放验证</div>
+          </div>
+          <div class="callout">
+            闭环每一步都必须保留可追溯的证据与指标，<strong>不允许出现"只有结论没有原因"的黑盒输出</strong>。
+          </div>
+        </section>
+
+        <section id="users">
+          <h2>3. 用户与典型旅程</h2>
+          <table>
+            <thead>
+              <tr><th>页面</th><th>典型动作</th><th>当前实现</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>/workbench</code></td><td>上传对话、跑评估、看图表与建议、保存 baseline</td><td>调用 <code>/api/ingest</code> + <code>/api/evaluate?stream=1</code></td></tr>
+              <tr><td><code>/online-eval</code></td><td>选客户与 baseline，配置回复 API，回放对比</td><td>调用 <code>/api/online-eval/replay</code></td></tr>
+              <tr><td><code>/datasets</code></td><td>浏览 goodcase / badcase 案例池</td><td>调用 <code>/api/eval-datasets/*</code></td></tr>
+              <tr><td><code>/remediation-packages</code></td><td>把 badcase 编译成调优包</td><td>调用 <code>/api/remediation-packages/*</code></td></tr>
+              <tr><td><code>/chat</code></td><td>对话解释结果、触发评估技能</td><td>调用 <code>/api/copilot/chat</code></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="concepts">
+          <h2>4. 关键概念词典</h2>
+          <table>
+            <tbody>
+              <tr><td><code>RawChatlogRow</code></td><td>上传后的最小标准行：sessionId / timestamp / role / content</td></tr>
+              <tr><td><code>NormalizedChatlogRow</code></td><td>排序、补 turnIndex 与时间字段后的行</td></tr>
+              <tr><td><code>EnrichedChatlogRow</code></td><td>加入主题、情绪、节奏、是否提问、是否断点等派生字段的行级中间层</td></tr>
+              <tr><td><code>TopicSegment</code></td><td>session 内的主题片段，是主观评估的基本单元</td></tr>
+              <tr><td><code>ObjectiveMetrics</code></td><td>仅依赖规则与统计的客观指标聚合</td></tr>
+              <tr><td><code>SubjectiveMetrics</code></td><td>LLM Judge（或规则降级）得到的主观结果，含四维评审、情绪曲线、目标达成、恢复轨迹</td></tr>
+              <tr><td><code>ImplicitSignal</code></td><td>兴趣下降、理解障碍、情绪恢复失败等隐式风险，规则推断</td></tr>
+              <tr><td><code>EvidenceSpan</code></td><td>可定位到 turn / segment 的证据片段</td></tr>
+              <tr><td><code>Baseline / BaselineRun</code></td><td>客户基线快照，用于在线评测对比</td></tr>
+              <tr><td><code>OnlineEvalRun</code></td><td>一次基于 baseline 的回放评测运行</td></tr>
+              <tr><td><code>EvalCase / SampleBatch</code></td><td>评测样本与抽样批次，用于回归</td></tr>
+              <tr><td><code>JudgeRun</code></td><td>一次 LLM Judge 调用记录</td></tr>
+              <tr><td><code>RemediationPackage</code></td><td>由 badcase 编译的调优包</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="status">
+          <h2>5. 当前实现速览</h2>
+          <p>仅供新人了解"现在长什么样"，不作为目标态依据。</p>
+          <div class="grid-2">
+            <div class="card">
+              <h4>主链路代码</h4>
+              <p>
+                解析 → enrich → objective + subjective → 报告与建议，集中在
+                <code>src/parsers/*</code>、<code>src/pipeline/*</code>、<code>src/data-onboarding/*</code>、
+                <code>src/pii/*</code>。前端在 <code>src/components/home/EvalConsole.tsx</code>。
+              </p>
+            </div>
+            <div class="card">
+              <h4>当前存储</h4>
+              <p>
+                混合：local-json / Postgres / filesystem store / memory ring buffer。<br/>
+                evaluation 投影部分写入 <code>zerore_records</code> 通用桥表。
+              </p>
+            </div>
+            <div class="card">
+              <h4>LLM 阶段</h4>
+              <p>
+                <span class="badge llm">topic_continuity_review</span>
+                <span class="badge llm">segment_emotion_baseline</span>
+                <span class="badge llm">subjective_dimension_judge</span>
+                <span class="badge llm">goal_completion_judge</span>
+                <span class="badge llm">recovery_trace_strategy</span>
+              </p>
+            </div>
+            <div class="card">
+              <h4>已有产品功能</h4>
+              <p>
+                工作台评估、在线评测、案例池、调优包、validation、agent run、jobs 队列、Copilot chat 都已实现，但底层是文件 / 本地 JSON 适配。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="why">
+          <h2>6. 为什么要重构</h2>
+          <ol>
+            <li>指标黑盒：用户难以追溯每个指标的输入、计算时机、依赖、降级行为和落点。</li>
+            <li>存储分裂：filesystem store / local-json / <code>zerore_records</code> 桥表 / postgres 适配并存，难以演进。</li>
+            <li>多套场景假设：历史 PRD 同时存在"B2B 客服优先""培训陪练优先""场景无关"三种判断。</li>
+            <li>多套指标表并存，易漂移。</li>
+            <li>主观评估失败时降级行为不一致，前端会出现规则降级伪装成 LLM 结果。</li>
+            <li>baseline / 在线评测 / 回归 链路依赖文件路径，多客户多版本难以横向对比。</li>
+          </ol>
+        </section>
+
+        <section id="stance">
+          <h2>7. 重构核心口径</h2>
+          <div class="grid-2">
+            <div class="card">
+              <h4>场景策略</h4>
+              <p>保持当前 AGENTS.md 口径，先做<strong>场景无关通用评估框架</strong>，Scenario 作为可插拔扩展。</p>
+            </div>
+            <div class="card">
+              <h4>后端策略</h4>
+              <p>目标态<strong>只使用 Supabase</strong>。删除 local-json、filesystem store、workspace 兼容、<code>zerore_records</code> 通用桥表作为正式方案。</p>
+            </div>
+            <div class="card">
+              <h4>API 策略</h4>
+              <p><strong>复用现有 CRUD 路由</strong>的请求与响应契约，但底层数据模型与持久化按本方案重写。</p>
+            </div>
+            <div class="card">
+              <h4>历史 PRD 与配置</h4>
+              <p>历史文档全文归档到 <code>原始prd参考/</code>，配置项只保留变量结构与用途模板，<strong>真实 key 不进入文档</strong>。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="keep">
+          <h2>8. 保留的核心功能</h2>
+          <ul>
+            <li><strong>补全层</strong>：RawChatlogRow → NormalizedChatlogRow → EnrichedChatlogRow 中间层思想保留。</li>
+            <li><strong>主客观指标</strong>：客观稳定可算；主观由 LLM Judge 产出 <code>score / reason / evidence / confidence</code>。</li>
+            <li><strong>隐式推断</strong>：兴趣下降、理解障碍、情绪恢复失败信号保留，并要求按 run / session / segment 可追溯。</li>
+            <li><strong>baseline 与在线评测</strong>：保留"工作台生成 baseline → 在线回放 → 多指标对比"闭环。</li>
+            <li><strong>评测集</strong>：goodcase / badcase、去重 hash、sample batch 抽样、回归验证能力保留。</li>
+            <li><strong>建议契约</strong>：所有建议保持"问题 → 影响 → 行动"模式，并显式绑定触发指标 key。</li>
+          </ul>
+        </section>
+
+        <section id="change">
+          <h2>9. 替换或删除的内容</h2>
+          <table>
+            <thead><tr><th>当前内容</th><th>目标处理</th></tr></thead>
+            <tbody>
+              <tr><td><code>local-json</code> 数据库适配</td><td>删除正式路径，仅作为迁移输入</td></tr>
+              <tr><td>filesystem dataset / baseline / remediation / validation / agent stores</td><td>改为 Supabase 表</td></tr>
+              <tr><td><code>workspaceId</code> 作为正式领域概念</td><td>替换为 <code>organization_id + project_id</code></td></tr>
+              <tr><td><code>zerore_records</code> 通用 JSONB 桥表</td><td>不作为目标主表</td></tr>
+              <tr><td>页面内部逻辑解释 / "启用 LLM 主观评估" 复选框</td><td>从 UI 移除</td></tr>
+              <tr><td>本地 JSON 队列</td><td>替换为 <code>jobs</code> 表 + 简单 worker</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="layers">
+          <h2>10. 目标分层</h2>
+          <div class="grid-2">
+            <div class="card"><h4>接入层</h4><p>upload / ingest / data-onboarding：CSV / JSON / TXT / MD → canonical rawRows。</p></div>
+            <div class="card"><h4>补全层</h4><p>normalize / segmenter / emotion enrich / row enrich：产出 EnrichedChatlogRow + TopicSegment。</p></div>
+            <div class="card"><h4>指标层</h4><p>objective / subjective / implicit：客观、主观、隐式风险信号。</p></div>
+            <div class="card"><h4>证据层</h4><p>evidence_spans / badcase / baseline：证据片段、badcase、baseline、回放输入。</p></div>
+            <div class="card"><h4>报告层</h4><p>charts / summary / suggestions：图表、摘要卡、优化建议。</p></div>
+            <div class="card"><h4>存储层</h4><p>Supabase / Postgres：所有业务对象、运行产物、指标信号、审计记录。</p></div>
+          </div>
+        </section>
+
+        <section id="metrics">
+          <h2>11. 主客观指标体系</h2>
+          <p>把"指标黑盒"拆成可读的 9 层。每个指标都能回答：来自哪里、何时计算、是否调用 LLM、失败如何降级、最终落到哪里。</p>
+          <table>
+            <thead><tr><th>层</th><th>名称</th><th>是否 LLM</th><th>关键产物</th></tr></thead>
+            <tbody>
+              <tr><td>L0</td><td>原始层</td><td>否</td><td>RawChatlogRow</td></tr>
+              <tr><td>L1</td><td>规范层</td><td>否</td><td>turnIndex / activeHour</td></tr>
+              <tr><td>L2</td><td>主题层</td><td>条件</td><td>TopicSegment</td></tr>
+              <tr><td>L3</td><td>情绪层</td><td>是 / 降级</td><td>emotionScore</td></tr>
+              <tr><td>L4</td><td>行级派生</td><td>否</td><td>responseGapSec、isQuestion、isTopicSwitch</td></tr>
+              <tr><td>L5</td><td>客观指标</td><td>否</td><td>会话深度、活跃时段、提问率…</td></tr>
+              <tr><td>L6</td><td>隐式推断</td><td>否</td><td>兴趣下降 / 理解障碍 / 情绪恢复失败</td></tr>
+              <tr><td>L7</td><td>主观指标</td><td>是 / 降级</td><td>共情、追问、答非所问、说教、目标达成、恢复轨迹</td></tr>
+              <tr><td>L8</td><td>报告与落库</td><td>否</td><td>charts / summary / suggestions / Supabase 信号表</td></tr>
+            </tbody>
+          </table>
+          <a class="linkbtn" href="./指标计算DAG.html">查看交互式指标 DAG（可按层显隐）</a>
+          <a class="linkbtn" href="../指标与DAG/主客观指标依赖表.xlsx">下载主客观指标依赖 XLSX</a>
+        </section>
+
+        <section id="data">
+          <h2>12. 数据流转</h2>
+          <pre>
+上传 → 解析 → mapping plan → PII 处理 → 归一化
+     → topic 切分 → 段情绪 → 行级派生
+     → 客观指标 + 隐式信号
+     → 主观维度 + 目标达成 + 恢复轨迹（LLM 可降级）
+     → charts / summary / suggestions
+     → Supabase 信号、证据、建议落库</pre>
+          <div class="callout warn">
+            LLM 可用性是非保证项：<strong>LLM 不可用时必须保留客观指标</strong>，主观结果必须显式标记 <code>source = fallback</code> 或 <code>unavailable</code>。
+          </div>
+        </section>
+
+        <section id="backend">
+          <h2>13. 后端方案</h2>
+          <p>目标态只使用 Supabase / Postgres。表分组与字段以 <code>5-后端方案-Supabase.md</code> 与 <code>../可复用组件/supabase-target-schema.sql</code> 为准。</p>
+          <div class="grid-3">
+            <div class="card"><h4>组织与项目</h4><p>organizations、projects、project_members、api_keys、audit_logs</p></div>
+            <div class="card"><h4>数据接入</h4><p>datasets、dataset_imports、sessions、message_turns</p></div>
+            <div class="card"><h4>评估运行</h4><p>evaluation_runs、topic_segments、objective_signals、subjective_signals、risk_tags、evidence_spans、suggestions</p></div>
+            <div class="card"><h4>LLM Judge</h4><p>judge_runs：stage / model / prompt_version / status / latency / output_json</p></div>
+            <div class="card"><h4>Baseline / 在线评测</h4><p>baselines、baseline_runs、online_eval_runs、replay_turns、run_comparisons</p></div>
+            <div class="card"><h4>评测集 / 调优 / 任务</h4><p>eval_cases、sample_batches、remediation_packages、validation_runs、agent_runs、jobs</p></div>
+          </div>
+        </section>
+
+        <section id="api">
+          <h2>14. API 与 LLM 契约</h2>
+          <p><strong>API 契约不变</strong>：路径、方法、请求体字段全部保留，只换底层存储。</p>
+          <table>
+            <thead><tr><th>路由</th><th>用途</th></tr></thead>
+            <tbody>
+              <tr><td><code>POST /api/ingest</code></td><td>解析上传内容，输出 canonical rawRows</td></tr>
+              <tr><td><code>POST /api/evaluate</code></td><td>跑评估并返回 meta + objectiveMetrics + subjectiveMetrics + charts + suggestions</td></tr>
+              <tr><td><code>POST /api/workbench-baselines</code></td><td>保存 baseline 快照</td></tr>
+              <tr><td><code>POST /api/online-eval/replay</code></td><td>基于 baseline 回放并对比</td></tr>
+              <tr><td><code>/api/eval-datasets/*</code></td><td>case / sample batch / harvest / cluster</td></tr>
+              <tr><td><code>/api/remediation-packages/*</code></td><td>调优包列表与详情</td></tr>
+            </tbody>
+          </table>
+          <div class="callout">
+            LLM Judge 必须保留 <strong>降级策略</strong>：HTTP 失败、解析失败、schema 校验失败都要写入 <code>judge_runs</code>，并显式回退到规则结果。
+          </div>
+        </section>
+
+        <section id="fe">
+          <h2>15. 前端展示约束</h2>
+          <ul>
+            <li>不展示算法名、prompt stage、模块路径；用户看到的是业务语义。</li>
+            <li>主观指标必须显示来源：<span class="badge llm">LLM 评审</span> <span class="badge warn">规则降级</span> <span class="badge bad">不可用</span>。</li>
+            <li>建议卡片按"问题 → 影响 → 行动"展示，绑定触发指标的中文名。</li>
+            <li>跨页跳转后状态保留（基于 sessionStorage 或后端 run）。</li>
+            <li>从 UI 移除"启用 LLM 主观评估"复选框。</li>
+          </ul>
+        </section>
+
+        <section id="test">
+          <h2>16. 测试与回归</h2>
+          <div class="grid-2">
+            <div class="card"><h4>必备脚本（MVP）</h4><p><code>tsc --noEmit</code>、<code>npm run lint</code>、<code>npm run smoke:e2e:*</code>、<code>calibration:ci</code>、<code>db:smoke:evaluate-projection</code>；<code>generalization:ci</code> 为 <span style="color:#fbbf24;">Phase 2</span> 脚本。</p></div>
+            <div class="card"><h4>客观回归</h4><p>固定 fixture 的 snapshot：客观指标输出哈希稳定，改动需要解释。</p></div>
+            <div class="card"><h4>主观回归</h4><p>calibration gold set，分数误差与 reason 关键词一致率，阈值建议 0.85。</p></div>
+            <div class="card"><h4>投影回归</h4><p>一次 evaluate 必须能在 Supabase 中看到 runs / segments / signals / evidence 完整写入。</p></div>
+            <div class="card" style="border-color:rgba(251,191,36,0.3)"><h4>泛化验证（M1–M5）<span style="color:#fbbf24;font-size:11px;margin-left:6px;">⚠️ Phase 2</span></h4><p>Seen/Holdout 分离 + Bootstrap CI + 跨能力 Guard。N &lt; 10 不产出 pass/fail 只输出 INSUFFICIENT_EVIDENCE。结果写入 <code>validation_generalization_reports</code>。MVP 阶段表/字段预留，不激活。</p></div>
+          </div>
+          <div class="callout warn" style="margin-top:16px;">
+            <strong>在线回放比对的统计局限：</strong>当前回放只保留用户原始话术，不重生成后续轮次，是一种"前缀重放"。比对结论仅适用于「同一用户话术下新版本回复的改善幅度」，不能模拟真实多轮发散。MVP 阶段比对结论附带 N（样本量），小样本时需在 UI 明确提示。Bootstrap CI 与 gen_coeff 门禁为 <strong>Phase 2（P4+）</strong> 机制。
+          </div>
+        </section>
+
+        <section id="extras">
+          <h2>17. 新规划能力</h2>
+          <p>除主链路外，本轮重构同步规划三块新能力，把"评估 → 案例 → 调优"闭环做厚。</p>
+
+          <h3>17.1 调优包 Skill 化交付</h3>
+          <p>原先 4 件套文档（issue-brief / spec / badcases / acceptance-gate）升级为<strong>可执行 Skill 文件夹</strong>，客户在 Claude Code / Codex / Cursor 等 IDE 中安装后只需说"运行调优包 zeval-remediation-{packageId}"即可触发，用完即弃。</p>
+          <pre>zeval-remediation-{packageId}/
+├─ SKILL.md                 # 描述 + 触发指令 + Agent 行动剧本
+├─ metadata.json            # 版本 / 来源 / 触发指标
+├─ issue-brief.md
+├─ remediation-spec.yaml
+├─ badcases.jsonl
+├─ acceptance-gate.yaml
+├─ prompts/                 # 系统 / 用户 prompt 调整建议（可选）
+└─ scripts/                 # 触发剧本与验证步骤</pre>
+          <div class="badge-row">
+            <span class="badge">新表 remediation_packages.skill_*</span>
+            <span class="badge">新路由 /api/remediation-packages/[id]/skill</span>
+            <span class="badge">兼容 4 件套</span>
+          </div>
+          <p class="dim">详见 <a href="../重构方案梳理/12-调优包-Skill化交付.md">12-调优包-Skill化交付.md</a>。</p>
+
+          <h3>17.2 案例池自动入池规则</h3>
+          <p>评估完成后，按<strong>五条采集通道</strong>自动识别值得入池的会话，写入 <code>eval_case_candidates</code>，去重后晋升为正式 <code>eval_cases</code>。每条 case 必须显式标注 <code>source</code>，共 8 类：</p>
+          <table>
+            <thead><tr><th>source</th><th>通道</th><th>触发方式</th><th>入池类型</th></tr></thead>
+            <tbody>
+              <tr><td><code>auto_tp</code></td><td>TP — 真坏案例</td><td>规则 / 主观指标命中（goal_failed、low_empathy、interest_decline、recovery_failure 等）</td><td><span class="badge bad">badcase</span></td></tr>
+              <tr><td><code>auto_fn</code></td><td>FN — 漏报</td><td>系统判 OK，但下游信号异常（负向尾、重复提问、长度骤降）</td><td><span class="badge bad">badcase</span></td></tr>
+              <tr><td><code>auto_uncertainty</code></td><td>边界案例</td><td>Judge confidence ∈ [0.4, 0.6]，默认 pending_review</td><td><span class="badge bad">badcase</span></td></tr>
+              <tr><td><code>auto_disagreement</code></td><td>评估器分歧</td><td>规则命中 ≥ 1 项，但 LLM judge 整体判为达标</td><td><span class="badge bad">badcase</span></td></tr>
+              <tr><td><code>auto_tn</code></td><td>TN — 金标正例</td><td>高质量会话抽样（目标达成 + 共情 ≥ 4，或按配置比例随机抽取）</td><td><span class="badge good">goodcase</span></td></tr>
+              <tr><td><code>manual_fp</code></td><td>FP — 人工复审</td><td>人工把 badcase 标记为假阳性 → 自动转为正例对照组</td><td><span class="badge good">goodcase</span></td></tr>
+              <tr><td><code>synthesized</code></td><td>合成</td><td>LLM 辅助生成，不进入 baseline 统计</td><td><span class="badge">任意</span></td></tr>
+              <tr><td><code>imported</code></td><td>外部导入</td><td>批量导入历史案例</td><td><span class="badge">任意</span></td></tr>
+            </tbody>
+          </table>
+          <ul>
+            <li>去重：精确哈希 + 近似（长度差 / 字符差 / 命中规则相同）。</li>
+            <li>假阳性（FP）：人工标记后 case 转为 <code>source=manual_fp</code> goodcase，同一 session 不再被 TP 通道重复入池。</li>
+            <li><code>auto_fn / auto_uncertainty / auto_disagreement</code> 三类默认 <code>pending_review</code>，不直接参与回归统计，等待人工确认。</li>
+          </ul>
+          <p class="dim">详见 <a href="../重构方案梳理/13-案例池自动入池规则.md">13-案例池自动入池规则.md</a>。</p>
+
+          <h3>17.3 长尾样本合成</h3>
+          <p>客户在自己项目空间内描述长尾场景（场景简介 + hints + personas + 期望失败模式），由 Zeval 用 LLM 合成评测样本，<strong>合成后再用 LLM 做对齐自校验</strong>，通过质量门后入池。合成样本默认不参与 baseline 与在线评测的统计基线。</p>
+          <div class="flow">
+            <div class="step"><div class="num">01</div>客户输入场景与 hints</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">02</div>LLM 生成 candidate sessions</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">03</div>schema 校验 + 自校验</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">04</div>去重 + 入池（source=synthesized）</div>
+          </div>
+          <p class="dim">详见 <a href="../重构方案梳理/14-样本合成与长尾覆盖.md">14-样本合成与长尾覆盖.md</a>。</p>
+
+          <h3>17.4 能力维度评测与归因</h3>
+          <p>Zeval 不只是"对话质量评估工具"，目标是"Agent 优化决策系统"。把用户语言（"我想优化多轮对话"）映射到工程语言（改 model / prompt / harness 哪一层），靠两张表 + 一个数据立方体。</p>
+
+          <h4>3D 立方体：评测集是 capability × source × layer 的点</h4>
+          <pre style="margin-top:8px;">capabilityDimension（X 轴，12 个能力）× source（Y 轴，6+2 类）× failureLayer（Z 轴，L0–L8）</pre>
+          <p>每条 case 落到立方体的一个点：<code>{ capability, source, failureLayer }</code>。每个能力桶内独立维护完整的 6+2 类信号（不共用），按能力分桶 calibration、按能力发起优化决策、按能力定向检测规则。</p>
+
+          <h4>Canonical Agent Harness — 9 层抽象</h4>
+          <p>收敛自 Claude Agent SDK / LangGraph / OpenAI Assistants v2 / Agentic RAG 四套主参考架构。每一层都有"可独立替换 / 测 / 归因"的特征。</p>
+          <table>
+            <thead><tr><th>层</th><th>含义</th><th>典型自变量</th></tr></thead>
+            <tbody>
+              <tr><td><code>L0</code></td><td>Model Substrate 模型底座</td><td>换模型 / 调温度 / 路由策略</td></tr>
+              <tr><td><code>L1</code></td><td>Input Understanding 意图解析</td><td>改 intent schema / validator</td></tr>
+              <tr><td><code>L2</code></td><td>Planning 任务分解</td><td>改 plan prompt / plan-reflect</td></tr>
+              <tr><td><code>L3</code></td><td>Memory & Context 记忆与上下文</td><td>改 summarization / truncation</td></tr>
+              <tr><td><code>L4</code></td><td>Retrieval 检索</td><td>改 chunk / rerank / query rewrite</td></tr>
+              <tr><td><code>L5</code></td><td>Tool Selection 工具选择</td><td>改 tool description / schema</td></tr>
+              <tr><td><code>L6</code></td><td>Tool Execution 工具执行</td><td>改 retry / timeout / parser</td></tr>
+              <tr><td><code>L7</code></td><td>State & Control 状态与控制流</td><td>改 graph 拓扑 / 终止条件</td></tr>
+              <tr><td><code>L8</code></td><td>Generation 最终合成</td><td>改 system prompt / output schema</td></tr>
+            </tbody>
+          </table>
+
+          <h4>能力 ↔ Harness 层归因矩阵（节选）</h4>
+          <table>
+            <thead><tr><th>能力维度</th><th>主因层</th><th>典型对照实验</th></tr></thead>
+            <tbody>
+              <tr><td>multi_turn_coherence 多轮一致性</td><td>L3 Memory</td><td>改 summarization / context window</td></tr>
+              <tr><td>tool_calling_correctness 工具调用</td><td>L5 Tool Selection</td><td>改 tool description / 跨模型</td></tr>
+              <tr><td>knowledge_grounding 知识忠实度</td><td>L4 Retrieval</td><td>改 chunk / rerank / 加引用约束</td></tr>
+              <tr><td>workflow_execution 工作流</td><td>L7 State + L2 Planning</td><td>改终止条件 / retry 策略</td></tr>
+              <tr><td>latency_efficiency 效率</td><td>L7 + L4 + L0</td><td>减步数 / 换更小模型 / cache</td></tr>
+            </tbody>
+          </table>
+
+          <h4>Copilot 流程</h4>
+          <div class="flow">
+            <div class="step"><div class="num">01</div>用户痛点描述</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">02</div>diagnose_capability_gap：抽出能力维度</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">03</div>compose_eval_dataset_for_capability：组装定向评测集</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">04</div>attribute_failure_to_layer：层级归因</div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">05</div>suggest_optimization_path：性价比排序</div>
+          </div>
+
+          <p class="dim">详见 <a href="../重构方案梳理/15-能力维度评测与归因.md">15-能力维度评测与归因.md</a>。</p>
+
+          <h3>17.5 泛化验证机制（M1–M5）<span style="color:#fbbf24;font-size:13px;font-weight:400;margin-left:8px;">⚠️ Phase 2（P4+）规划，MVP 不实施</span></h3>
+          <p>当前 offline_eval 只能证明"在见过的 badcase 上改善了"，无法证明能力本身泛化。M1–M5 机制从根本上解决这个问题，确保修复的改善具有<strong>举一反三</strong>的泛化性。<strong style="color:#fbbf24;">本节为 Phase 2 规划，相关字段与表已在 schema 中预留，MVP（P1–P3）阶段不激活。</strong></p>
+
+          <table>
+            <thead><tr><th>机制</th><th>核心思路</th><th>关键判定条件</th><th>阶段</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>M1 Seen / Holdout 分离</strong></td>
+                <td>每个 capability 桶 30% case 标 <code>holdout=true</code>，修复者不可见，只在最终 gate 时读取</td>
+                <td><code>gen_coeff = holdout改善率 / seen改善率</code>，≥ 0.8 通过，&lt; 0.5 拒绝</td>
+                <td>P4</td>
+              </tr>
+              <tr>
+                <td><strong>M2 最小样本量门禁</strong></td>
+                <td>每个 capability 桶 N &lt; 10 时不产出 pass/fail</td>
+                <td>输出 <code>INSUFFICIENT_EVIDENCE</code>，不允许 PM 人工覆盖</td>
+                <td>P4</td>
+              </tr>
+              <tr>
+                <td><strong>M3 合成变体探针</strong></td>
+                <td>每批 badcase 入库后自动合成 K=5 个同能力、不同场景探针，全部落入 holdout</td>
+                <td>探针 scene_diversity_score &lt; 0.6 强制拒绝，capability_alignment_score ≥ 0.75</td>
+                <td>P4</td>
+              </tr>
+              <tr>
+                <td><strong>M4 跨维度回归 Guard</strong></td>
+                <td>修复通过 seen_set 后，追加跑全量 12 维 capability holdout 检查</td>
+                <td>任一 capability delta ≤ -0.03 → 整包 fail；防止修好 A 搞坏 B</td>
+                <td>P4</td>
+              </tr>
+              <tr>
+                <td><strong>M5 Paired Bootstrap CI</strong></td>
+                <td>Case-level delta 不报点估计，报 95% bootstrap CI（2000 次有放回抽样）</td>
+                <td><code>ci_95_lower ≤ 0</code> → <code>TRENDING_NOT_SIGNIFICANT</code>，不通过门禁</td>
+                <td>P4</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4>新表 validation_generalization_reports</h4>
+          <p>每次 validation run 完成后写入，包含：per-capability gen_coeff、bootstrap CI、cross_capability_guard 结果、insufficient_evidence 列表、overall_verdict。</p>
+          <div class="badge-row">
+            <span class="badge">新字段 eval_cases.holdout</span>
+            <span class="badge">新表 validation_generalization_reports</span>
+            <span class="badge">新接口 /api/eval-datasets/synthesize-probes</span>
+            <span class="badge">新接口 /api/validation-runs/[id]/generalization</span>
+          </div>
+          <p class="dim">详见 <a href="../重构方案梳理/11-测试与回归.md">11-测试与回归.md</a> 11.12 节。</p>
+
+          <h3>17.6 LLM 默认模型与 thinking 关闭</h3>
+          <div class="callout warn">
+            默认模型 <code>Qwen/Qwen3.5-27B</code> 是<strong>思考型模型</strong>，必须显式同时关闭以下两个开关，否则模型只回 <code>reasoning_content</code>，<code>content</code> 为空，导致整条评估链路 JSON 解析失败。
+            <pre style="margin-top:10px;">ZEVAL_JUDGE_ENABLE_THINKING=false
+SILICONFLOW_ENABLE_THINKING=false</pre>
+            切换到非思考模型时仍要保留两个开关为 <code>false</code>，避免误用思考模型。
+          </div>
+        </section>
+
+        <section id="path">
+          <h2>18. 实施路线</h2>
+          <div class="timeline"><div class="stage">P0 方案冻结</div><div class="body">指标 / DAG / Supabase schema / CRUD 映射文档化，把黑盒讲清楚。</div></div>
+          <div class="timeline"><div class="stage">P1 评估投影</div><div class="body">把一次 evaluate 完整落入 Supabase：runs / segments / signals / evidence。</div></div>
+          <div class="timeline"><div class="stage">P2 baseline + 在线评测</div><div class="body">替换 workbench baseline filesystem store；客户与时间维度的 baseline 比较闭环。</div></div>
+          <div class="timeline"><div class="stage">P3 评测集 + 回归 + 自动入池（MVP 终点）</div><div class="body">case / sample batch / validation 全部入库；自动入池规则与候选生效；<code>capability_dimension</code> 可选标注（不强制）；<strong>failure_layer 不强制（字段预留，Phase 2 再启用）</strong>。</div></div>
+          <div class="timeline"><div class="stage" style="color:#fbbf24;">P4 调优包 Skill 化 + 长尾合成 + Agent + 泛化验证机制 ⚠️ Phase 2</div><div class="body">remediation_packages 升级为 Skill 文件夹打包；synthesis_runs / synthesized_samples 上线；agent_runs / jobs 全部入库；<strong>泛化验证机制（M1–M5）全部上线</strong>：eval_cases.holdout 分离 + validation_generalization_reports 表 + bootstrap CI + cross-capability guard；<strong>failure_layer 强制约束正式启用</strong>。</div></div>
+          <div class="timeline"><div class="stage" style="color:#fbbf24;">P5 能力归因 + Copilot 决策 + 实验路由 ⚠️ Phase 2</div><div class="body">capability_attributions / experiment_routes 表上线；Copilot 新增 4 个决策 skill；从用户痛点直达"先改哪一层"的优化路径推荐；harness 层对照实验闭环跑通。</div></div>
+        </section>
+
+        <section id="docs">
+          <h2>19. 文档与产物索引</h2>
+          <p>所有重构所需的内容都在本文件夹同级目录中。强烈推荐顺序阅读：</p>
+          <ol>
+            <li><a href="../重构方案梳理/README.md">重构方案梳理 / README.md</a>：项目背景、口径、文档索引</li>
+            <li><a href="../重构方案梳理/1-项目架构.md">1-项目架构</a> · <a href="../重构方案梳理/4-数据流转.md">4-数据流转</a></li>
+            <li><a href="../重构方案梳理/2-主客观指标说明.md">2-主客观指标说明</a> · <a href="../重构方案梳理/3-隐式推断.md">3-隐式推断</a></li>
+            <li><a href="./指标计算DAG.html">指标计算 DAG（交互式 HTML）</a> · <a href="../指标与DAG/主客观指标依赖表.xlsx">主客观指标依赖 XLSX</a></li>
+            <li><a href="../重构方案梳理/5-后端方案-Supabase.md">5-后端方案-Supabase</a> · <a href="../可复用组件/supabase-target-schema.sql">supabase-target-schema.sql</a></li>
+            <li><a href="../重构方案梳理/7-API契约.md">7-API 契约</a> · <a href="../重构方案梳理/8-LLM调用与降级.md">8-LLM 调用与降级</a></li>
+            <li><a href="../重构方案梳理/9-数据迁移与历史产物处理.md">9-数据迁移与历史产物处理</a></li>
+            <li><a href="../重构方案梳理/10-前端展示约束.md">10-前端展示约束</a> · <a href="../重构方案梳理/11-测试与回归.md">11-测试与回归</a></li>
+            <li><a href="../重构方案梳理/12-调优包-Skill化交付.md">12-调优包 Skill 化交付</a> · <a href="../重构方案梳理/13-案例池自动入池规则.md">13-案例池自动入池规则</a> · <a href="../重构方案梳理/14-样本合成与长尾覆盖.md">14-样本合成与长尾覆盖</a></li>
+            <li><a href="../重构方案梳理/15-能力维度评测与归因.md">15-能力维度评测与归因</a></li>
+            <li><a href="../重构方案梳理/6-重构实施路线.md">6-重构实施路线</a></li>
+            <li><a href="../原始prd参考/README.md">原始 PRD 参考索引</a>（按需）</li>
+          </ol>
+          <div class="callout">
+            <strong>如何使用本目录</strong>：把这一份 HTML 当作"为什么"的讲解；把 <code>重构方案梳理/</code> 当作"怎么做"的工程规范；把 <code>可复用组件/</code> 当作"接什么"的样板；把 <code>原始prd参考/</code> 当作"以前怎么想"的史料。
+          </div>
+        </section>
+
+        <footer>
+          Zeval 重构方案 · 项目导览 · 仅作产品与工程内部理解使用
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

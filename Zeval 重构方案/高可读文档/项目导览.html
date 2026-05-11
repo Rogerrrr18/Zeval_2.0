@@ -342,7 +342,7 @@
           <li><a href="#api">API 与 LLM 契约</a></li>
           <li><a href="#fe">前端展示约束</a></li>
           <li><a href="#test">测试与回归</a></li>
-          <li><a href="#extras">新规划能力</a></li>
+          <li><a href="#extras">新规划能力</a> <span style="color:#64748b;font-size:11px;">（含 17.7 管线架构）</span></li>
           <li><a href="#path">实施路线</a></li>
           <li><a href="#docs">文档与产物索引</a></li>
         </ol>
@@ -362,7 +362,12 @@
 
             <div style="background:rgba(15,23,42,0.6);border-left:3px solid #38bdf8;border-radius:0 12px 12px 0;padding:16px 20px;">
               <div style="font-weight:700;color:#e2e8f0;margin-bottom:6px;">② 评测集 6+2 类信号通道（完善 <a href="../重构方案梳理/13-案例池自动入池规则.md" style="color:#818cf8;">13 号文档</a>）</div>
-              <p style="margin:0;color:#94a3b8;font-size:14px;line-height:1.7;">案例池不再只收"确认坏的对话"，按混淆矩阵四象限建立 <strong style="color:#c7d2fe;">8 类 source 通道</strong>：<code style="color:#7dd3fc;">auto_tp</code>（真坏）/ <code style="color:#7dd3fc;">manual_fp</code>（假阳性转正例）/ <code style="color:#7dd3fc;">auto_fn</code>（系统漏报）/ <code style="color:#7dd3fc;">auto_tn</code>（金标正例）/ <code style="color:#7dd3fc;">auto_uncertainty</code>（边界）/ <code style="color:#7dd3fc;">auto_disagreement</code>（评估器分歧）/ <code style="color:#7dd3fc;">synthesized</code> / <code style="color:#7dd3fc;">imported</code>。每个能力维度独立维护这组 8 类信号（不共用桶），是 Calibration 与归因决策的最小可信单元。</p>
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:14px;line-height:1.7;">案例池不再只收"确认坏的对话"，按混淆矩阵四象限建立 <strong style="color:#c7d2fe;">8 类 source 通道</strong>：<code style="color:#7dd3fc;">auto_tp</code>（真坏）/ <code style="color:#7dd3fc;">manual_fp</code>（假阳性转正例）/ <code style="color:#7dd3fc;">auto_fn</code>（系统漏报）/ <code style="color:#7dd3fc;">auto_tn</code>（金标正例）/ <code style="color:#7dd3fc;">auto_uncertainty</code>（边界）/ <code style="color:#7dd3fc;">auto_disagreement</code>（评估器分歧）/ <code style="color:#7dd3fc;">synthesized</code> / <code style="color:#7dd3fc;">imported</code>。每个能力维度独立维护这组 8 类信号（不共用桶），是 Calibration 与归因决策的最小可信单元。</p>
+              <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.6;border-top:1px solid rgba(120,144,180,0.15);padding-top:8px;">
+                <strong style="color:#fbbf24;">⚠️ 两项实现约束：</strong>
+                <br>① <code style="color:#7dd3fc;">auto_disagreement</code>（评估器分歧）<strong style="color:#e2e8f0;">不由当前 fused 流水线自然产生</strong>。现行管线是"LLM 优先、规则兜底"的单轨串联，规则结果与 LLM 结果无法独立对比。要产生真正的分歧信号，需要<strong style="color:#c7d2fe;">双轨并行</strong>（规则链与 LLM judge 同时跑、事后对比），当前标记为<strong style="color:#c7d2fe;">校准专用通道</strong>，MVP 阶段手动录入。
+                <br>② <strong style="color:#e2e8f0;">瘦日志场景</strong>（仅有 Q&amp;A 对 / final_message，无工具调用链、无 memory 命中记录）下，<code style="color:#7dd3fc;">auto_fn</code> 退化为 <strong style="color:#c7d2fe;">FN-proxy</strong>（文本可见信号：负向尾词、重复提问、长度骤降），harness 层 L4–L6 往往无法判定，<code style="color:#7dd3fc;">failure_layer</code> 默认为 <code>unknown</code> 或 <code>L8</code>。
+              </p>
             </div>
 
             <div style="background:rgba(15,23,42,0.6);border-left:3px solid #34d399;border-radius:0 12px 12px 0;padding:16px 20px;">
@@ -838,6 +843,66 @@
 SILICONFLOW_ENABLE_THINKING=false</pre>
             切换到非思考模型时仍要保留两个开关为 <code>false</code>，避免误用思考模型。
           </div>
+
+          <h3 id="s17-7">17.7 评估管线架构说明与信号通道可行性</h3>
+          <p>本节汇总 v2.1 可行性审查（<code>v2.1补充-评估器分歧与8类信号可行性</code>）的核心结论，防止设计文档与实现产生认知偏差。</p>
+
+          <h4>17.7.1 管线执行顺序（Enrich → Objective → Subjective）</h4>
+          <p>当前管线是<strong>顺序串联</strong>，三个阶段按序执行，不是"主观 = 客观加权派生"：</p>
+          <div class="flow">
+            <div class="step"><div class="num">01</div>Enrich<br><span style="font-size:11px;color:#64748b;">字段补全 · 主题切分<br>规则信号提取</span></div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">02</div>Objective<br><span style="font-size:11px;color:#64748b;">客观指标计算<br>（依赖 Enrich 输出）</span></div>
+            <div class="arrow">→</div>
+            <div class="step"><div class="num">03</div>Subjective<br><span style="font-size:11px;color:#64748b;">LLM Judge 评审<br>（依赖 Enrich 输出，<br>不依赖客观指标分值）</span></div>
+          </div>
+          <p>主观阶段（LLM Judge）与客观阶段<strong>共享 Enrich 信号</strong>，但主观分数不从客观分值二次推导，两者并列而非派生。</p>
+
+          <h4>17.7.2 Fused 管线 vs. 双轨并行</h4>
+          <p>当前实现是 <strong>fused（融合）</strong> 模式：LLM judge 优先，LLM 失败时规则兜底。这个结构无法自动产生"评估器分歧"信号：</p>
+          <table>
+            <thead><tr><th>模式</th><th>结构</th><th>能否产生 auto_disagreement</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Fused（当前）</strong></td>
+                <td>LLM 优先 → 规则兜底，单一结果输出</td>
+                <td><span class="badge bad">不能</span> 规则仅在 LLM 失败时运行</td>
+              </tr>
+              <tr>
+                <td><strong>双轨并行（未来）</strong></td>
+                <td>规则链与 LLM judge 独立运行，事后对比结论</td>
+                <td><span class="badge good">可以</span> 结论不一致 → auto_disagreement</td>
+              </tr>
+            </tbody>
+          </table>
+          <p><strong>结论：<code>auto_disagreement</code> 在 MVP 阶段为<span style="color:#fbbf24;">校准专用通道</span>，由校准员手动录入；自动产生需 Phase 2 引入双轨并行架构。</strong></p>
+
+          <h4>17.7.3 Badcase 采集逻辑</h4>
+          <p>Badcase 入池不依赖单一断言，而是<strong>多信号启发式</strong>组合判断（<code>src/eval-datasets/harvest-badcases.ts</code>）：</p>
+          <ul>
+            <li>负向关键词命中（客户流失意向、投诉升级等）</li>
+            <li>高严重度隐式信号（兴趣下降、服务拒绝等）</li>
+            <li>目标失败标签 / 恢复失败标签</li>
+          </ul>
+          <p>三类信号任一触发均可入池（OR 逻辑），不需要全部命中。</p>
+
+          <h4>17.7.4 瘦日志下 8 类信号通道可行性</h4>
+          <p><strong>瘦日志</strong>定义：只有 Q&amp;A 对或 final_message，没有工具调用链、memory 命中记录、reasoning block。这在 MVP 典型场景（对话智能体评测）中很常见。</p>
+          <table>
+            <thead><tr><th>source 通道</th><th>瘦日志可行性</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>auto_tp</code></td><td><span class="badge good">✓ 可用</span></td><td>负向关键词 + 文本级隐式信号足够触发</td></tr>
+              <tr><td><code>manual_fp</code></td><td><span class="badge good">✓ 不受限</span></td><td>人工标注，不依赖日志结构</td></tr>
+              <tr><td><code>auto_fn</code></td><td><span class="badge warn">⚠️ 弱化</span></td><td>退化为 FN-proxy（文本负向尾、重复提问、长度骤降），工具调用漏报不可见</td></tr>
+              <tr><td><code>auto_tn</code></td><td><span class="badge warn">⚠️ 需抽样</span></td><td>金标正例需通过随机抽样或高分阈值筛选，无法全自动</td></tr>
+              <tr><td><code>auto_uncertainty</code></td><td><span class="badge good">✓ 可用</span></td><td>Judge confidence 区间判断，不依赖日志结构</td></tr>
+              <tr><td><code>auto_disagreement</code></td><td><span class="badge warn">⚠️ 校准专用</span></td><td>需双轨并行架构，MVP 阶段手动录入（见 17.7.2）</td></tr>
+              <tr><td><code>synthesized</code></td><td><span class="badge good">✓ 可用</span></td><td>LLM 合成，不依赖真实日志</td></tr>
+              <tr><td><code>imported</code></td><td><span class="badge good">✓ 可用</span></td><td>批量导入，格式转换即可</td></tr>
+            </tbody>
+          </table>
+          <p><strong>瘦日志下 failure_layer 默认约定</strong>：L4–L6（检索/工具选择/工具执行）通常无法从文本日志判定，<code>failure_layer</code> 字段默认置 <code>unknown</code>，若确认是最终输出问题可标 <code>L8</code>。Phase 2 启用 harness 层归因后再补全。</p>
+          <p class="dim">完整分析见 <a href="./v2.1补充-评估器分歧与8类信号可行性.html">v2.1补充-评估器分歧与8类信号可行性.html</a>；瘦日志 source 操作定义见 <a href="../重构方案梳理/13-案例池自动入池规则.md">13-案例池自动入池规则.md</a> §13.11。</p>
         </section>
 
         <section id="path">
@@ -865,6 +930,7 @@ SILICONFLOW_ENABLE_THINKING=false</pre>
             <li><a href="../重构方案梳理/12-调优包-Skill化交付.md">12-调优包 Skill 化交付</a> · <a href="../重构方案梳理/13-案例池自动入池规则.md">13-案例池自动入池规则</a> · <a href="../重构方案梳理/14-样本合成与长尾覆盖.md">14-样本合成与长尾覆盖</a></li>
             <li><a href="../重构方案梳理/15-能力维度评测与归因.md">15-能力维度评测与归因</a></li>
             <li><a href="../重构方案梳理/6-重构实施路线.md">6-重构实施路线</a></li>
+            <li><a href="./v2.1补充-评估器分歧与8类信号可行性.html">v2.1 补充：评估器分歧与 8 类信号可行性</a>（管线架构·auto_disagreement·瘦日志可行性）</li>
             <li><a href="../原始prd参考/README.md">原始 PRD 参考索引</a>（按需）</li>
           </ol>
           <div class="callout">

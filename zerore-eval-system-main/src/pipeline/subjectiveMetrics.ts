@@ -3,6 +3,7 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import { buildGoalCompletions } from "@/pipeline/goalCompletion";
 import { buildRecoveryTraces } from "@/pipeline/recoveryTrace";
@@ -232,37 +233,10 @@ function isCompleteDimensionPayload(value: LlmJudgeDimensionPayload): boolean {
  * @returns Positive concurrency limit for Judge calls.
  */
 function resolveSessionJudgeConcurrency(): number {
-  const parsed = Number.parseInt(process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_JUDGE_CONCURRENCY;
-}
-
-/**
- * Map items with a bounded number of concurrent async workers.
- * @param items Input items.
- * @param concurrency Maximum concurrent operations.
- * @param mapper Async mapper.
- * @returns Results in the same order as the input.
- */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    for (;;) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) {
-        return;
-      }
-      results[index] = await mapper(items[index], index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ?? process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_SESSION_JUDGE_CONCURRENCY,
+  );
 }
 
 /**

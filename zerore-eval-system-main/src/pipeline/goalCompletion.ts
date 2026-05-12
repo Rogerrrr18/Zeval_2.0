@@ -8,6 +8,7 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import type {
   ChatRole,
@@ -43,6 +44,8 @@ const FAILURE_EXPRESSIONS = [
   /(你不明白|你没听懂|答非所问|驴唇不对马嘴)/,
 ];
 
+const DEFAULT_GOAL_COMPLETION_CONCURRENCY = 4;
+
 type LlmIntentAndJudgePayload = {
   userIntent?: string;
   status?: string;
@@ -72,32 +75,44 @@ export async function buildGoalCompletions(
   options: GoalCompletionOptions = {},
 ): Promise<GoalCompletionResult[]> {
   const grouped = groupRowsBySession(rows);
-  const results: GoalCompletionResult[] = [];
-
-  for (const [sessionId, sessionRows] of grouped.entries()) {
-    const ruleResult = evaluateGoalCompletionByRule(sessionId, sessionRows);
-    if (ruleResult.status !== "unclear" || !useLlm) {
-      results.push(ruleResult);
-      continue;
-    }
-
-    try {
-      const llmResult = await evaluateGoalCompletionWithLlm(sessionId, sessionRows, ruleResult, runId);
-      results.push(llmResult);
-    } catch (error) {
-      if (options.judgeRequired) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Goal completion LLM Judge 失败，session=${sessionId}：${message}`);
+  return mapWithConcurrency(
+    [...grouped.entries()],
+    resolveGoalCompletionConcurrency(),
+    async ([sessionId, sessionRows]) => {
+      const ruleResult = evaluateGoalCompletionByRule(sessionId, sessionRows);
+      if (ruleResult.status !== "unclear" || !useLlm) {
+        return ruleResult;
       }
-      console.error("Goal completion LLM judge failed:", sessionId, error);
-      results.push({
-        ...ruleResult,
-        triggeredRules: [...ruleResult.triggeredRules, "llm-fallback-failed"],
-      });
-    }
-  }
 
-  return results;
+      try {
+        const llmResult = await evaluateGoalCompletionWithLlm(sessionId, sessionRows, ruleResult, runId);
+        return llmResult;
+      } catch (error) {
+        if (options.judgeRequired) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Goal completion LLM Judge 失败，session=${sessionId}：${message}`);
+        }
+        console.error("Goal completion LLM judge failed:", sessionId, error);
+        return {
+          ...ruleResult,
+          triggeredRules: [...ruleResult.triggeredRules, "llm-fallback-failed"],
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Resolve bounded session-level goal-completion judge concurrency.
+ * @returns Positive concurrency limit.
+ */
+function resolveGoalCompletionConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_GOAL_CONCURRENCY ??
+      process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ??
+      process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_GOAL_COMPLETION_CONCURRENCY,
+  );
 }
 
 /**

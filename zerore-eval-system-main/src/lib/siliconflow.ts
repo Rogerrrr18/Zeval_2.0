@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { resolvePositiveInteger } from "@/lib/concurrency";
 import {
   ZEVAL_JUDGE_MAX_TOKENS,
   ZEVAL_JUDGE_TEMPERATURE,
@@ -31,6 +32,7 @@ type SiliconFlowChatResponse = {
 
 const DEFAULT_LLM_RETRY_ATTEMPTS = 3;
 const DEFAULT_LLM_TIMEOUT_MS = 45000;
+const DEFAULT_LLM_GLOBAL_CONCURRENCY = 4;
 
 type SiliconFlowLogContext = {
   stage: string;
@@ -46,6 +48,19 @@ type SiliconFlowLogContext = {
  * @returns Raw model content string.
  */
 export async function requestSiliconFlowChatCompletion(
+  messages: SiliconFlowMessage[],
+  context: SiliconFlowLogContext,
+): Promise<string> {
+  return runWithLlmGlobalConcurrency(() => requestSiliconFlowChatCompletionUnbounded(messages, context));
+}
+
+/**
+ * Execute a chat completion request after the caller has acquired a global LLM slot.
+ * @param messages OpenAI-compatible chat messages.
+ * @param context Logging context for this request stage.
+ * @returns Raw model content string.
+ */
+async function requestSiliconFlowChatCompletionUnbounded(
   messages: SiliconFlowMessage[],
   context: SiliconFlowLogContext,
 ): Promise<string> {
@@ -134,6 +149,63 @@ export async function requestSiliconFlowChatCompletion(
   }
 
   throw new Error("LLM Judge 重试耗尽。");
+}
+
+type LlmQueueItem<T> = {
+  operation: () => Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
+
+let activeLlmRequests = 0;
+const pendingLlmRequests: LlmQueueItem<unknown>[] = [];
+
+/**
+ * Run one provider call inside a process-wide concurrency limit.
+ * This limit is shared by segment emotion, goal completion, recovery trace and
+ * subjective dimension judges, so a large upload cannot fan out unbounded calls.
+ *
+ * @param operation Provider request operation.
+ * @returns Operation result.
+ */
+function runWithLlmGlobalConcurrency<T>(operation: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    pendingLlmRequests.push({ operation, resolve, reject } as LlmQueueItem<unknown>);
+    drainLlmQueue();
+  });
+}
+
+/**
+ * Start queued LLM requests while slots are available.
+ */
+function drainLlmQueue(): void {
+  const concurrency = resolveLlmGlobalConcurrency();
+  while (activeLlmRequests < concurrency && pendingLlmRequests.length > 0) {
+    const item = pendingLlmRequests.shift();
+    if (!item) {
+      return;
+    }
+    activeLlmRequests += 1;
+    item
+      .operation()
+      .then(item.resolve)
+      .catch(item.reject)
+      .finally(() => {
+        activeLlmRequests -= 1;
+        drainLlmQueue();
+      });
+  }
+}
+
+/**
+ * Resolve the process-wide LLM provider concurrency.
+ * @returns Positive concurrency limit.
+ */
+function resolveLlmGlobalConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY ?? process.env.ZEVAL_LLM_GLOBAL_CONCURRENCY,
+    DEFAULT_LLM_GLOBAL_CONCURRENCY,
+  );
 }
 
 /**
@@ -318,17 +390,6 @@ function resolveOptionalBoolean(value: string | undefined): boolean | undefined 
     return false;
   }
   return undefined;
-}
-
-/**
- * Resolve a positive integer environment override.
- * @param value Raw environment value.
- * @param fallback Fallback when the value is absent or invalid.
- * @returns Positive integer.
- */
-function resolvePositiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 /**

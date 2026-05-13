@@ -3,6 +3,7 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import type {
   EmotionIntensity,
@@ -30,6 +31,8 @@ type LlmEmotionPayload = {
   emotionConfidence?: number;
 };
 
+const DEFAULT_SEGMENT_EMOTION_CONCURRENCY = 4;
+
 /**
  * Score topic segments with an LLM baseline plus deterministic adjustment factors.
  * @param segments Topic segments resolved by the segmenter.
@@ -45,8 +48,10 @@ export async function scoreTopicSegmentEmotions(
 ): Promise<TopicSegment[]> {
   const rowsBySegmentId = buildRowsBySegmentId(segments, rows);
 
-  return Promise.all(
-    segments.map(async (segment) => {
+  return mapWithConcurrency(
+    segments,
+    resolveSegmentEmotionConcurrency(),
+    async (segment) => {
       const segmentRows = rowsBySegmentId.get(segment.topicSegmentId) ?? [];
       const baseJudgement = useLlm
         ? await judgeSegmentEmotionWithLlm(segment, segmentRows, runId).catch(() => buildRuleEmotionBaseline(segmentRows))
@@ -79,7 +84,18 @@ export async function scoreTopicSegmentEmotions(
         emotionRecoveryWeight: factors.recoveryWeight,
         emotionRiskPenalty: factors.riskPenalty,
       };
-    }),
+    },
+  );
+}
+
+/**
+ * Resolve bounded segment-level emotion judge concurrency.
+ * @returns Positive concurrency limit.
+ */
+function resolveSegmentEmotionConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_SEGMENT_CONCURRENCY ?? process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_SEGMENT_EMOTION_CONCURRENCY,
   );
 }
 

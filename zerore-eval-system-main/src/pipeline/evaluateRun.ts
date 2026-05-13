@@ -4,6 +4,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { consumeLlmRequestTelemetry, type LlmRequestTelemetry } from "@/lib/siliconflow";
 import { buildBadCaseAssets } from "@/pipeline/badCases";
 import { buildChartPayloads } from "@/pipeline/chartBuilder";
 import { enrichRows, toEnrichedCsv } from "@/pipeline/enrich";
@@ -16,7 +17,14 @@ import { buildSubjectiveMetrics } from "@/pipeline/subjectiveMetrics";
 import { buildSuggestions } from "@/pipeline/suggest";
 import { buildSummaryCards } from "@/pipeline/summary";
 import { getScenarioTemplateById } from "@/scenarios";
-import type { EvaluateResponse, RawChatlogRow, ScenarioEvaluateContext } from "@/types/pipeline";
+import type {
+  EvaluateResponse,
+  EvaluateRunState,
+  EvaluateStageRunStatus,
+  LlmJudgeRunSummary,
+  RawChatlogRow,
+  ScenarioEvaluateContext,
+} from "@/types/pipeline";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { EvalTrace } from "@/types/eval-trace";
 import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
@@ -65,6 +73,7 @@ export async function runEvaluatePipeline(
   options: EvaluateRunOptions,
 ): Promise<EvaluateResponse & { artifactPath?: string }> {
   const warnings: string[] = [];
+  const stageStatuses: EvaluateStageRunStatus[] = [];
   const judgeRequired = options.judgeRequired ?? options.useLlm;
   if (!rawRows.every((row) => Boolean(row.timestamp))) {
     warnings.push("检测到缺失 timestamp，部分时序指标已降级。");
@@ -73,17 +82,20 @@ export async function runEvaluatePipeline(
     throw new Error("LLM Judge 是当前评估的强依赖，但本次请求关闭了 useLlm。");
   }
 
-  const { enrichedRows, topicSegments } = await runEvaluateStage(options, "parse", "解析数据", () =>
+  const { enrichedRows, topicSegments } = await runEvaluateStage(options, stageStatuses, "parse", "解析数据", () =>
     enrichRows(rawRows, options.useLlm, options.runId),
   );
   const enrichedCsv = toEnrichedCsv(enrichedRows);
   const evalCaseBundle = buildEvalCaseBundle(enrichedRows, options.structuredTaskMetrics, options.trace);
-  const objectiveMetrics = await runEvaluateStage(options, "objective", "客观指标", async () =>
+  const objectiveMetrics = await runEvaluateStage(options, stageStatuses, "objective", "客观指标", async () =>
     buildObjectiveMetrics(enrichedRows),
   );
-  const subjectiveMetrics = await runEvaluateStage(options, "subjective", "主观指标", () =>
+  const subjectiveMetrics = await runEvaluateStage(options, stageStatuses, "subjective", "主观指标", () =>
     buildSubjectiveMetrics(enrichedRows, options.useLlm, options.runId, { judgeRequired }),
   );
+  if (subjectiveMetrics.status !== "ready") {
+    markStageDegraded(stageStatuses, "subjective", "subjective_metrics_degraded");
+  }
   const scenarioTemplate = options.scenarioId ? getScenarioTemplateById(options.scenarioId) : null;
   if (options.scenarioId && !scenarioTemplate) {
     warnings.push(`未找到场景模板：${options.scenarioId}，本次按通用评估返回。`);
@@ -112,7 +124,7 @@ export async function runEvaluatePipeline(
       extendedInputs.retentionFacts?.length ||
       extendedInputs.roleProfile,
   );
-  const extendedMetrics = await runEvaluateStage(options, "extended", "扩展指标", async () =>
+  const extendedMetrics = await runEvaluateStage(options, stageStatuses, "extended", "扩展指标", async () =>
     hasAnyExtendedInput
       ? buildExtendedMetrics({
           ...extendedInputs,
@@ -122,14 +134,14 @@ export async function runEvaluatePipeline(
       : undefined,
   );
 
-  const badCaseAssets = await runEvaluateStage(options, "badcase", "bad case 抽取", async () =>
+  const badCaseAssets = await runEvaluateStage(options, stageStatuses, "badcase", "bad case 抽取", async () =>
     buildBadCaseAssets(enrichedRows, objectiveMetrics, subjectiveMetrics, {
       runId: options.runId,
       scenarioId: options.scenarioId,
     }),
   );
 
-  const { charts, suggestions, summaryCards } = await runEvaluateStage(options, "complete", "完成", async () => ({
+  const { charts, suggestions, summaryCards } = await runEvaluateStage(options, stageStatuses, "complete", "完成", async () => ({
     charts: buildChartPayloads(enrichedRows),
     suggestions: buildSuggestions(enrichedRows, objectiveMetrics, subjectiveMetrics),
     summaryCards: buildSummaryCards(
@@ -145,6 +157,11 @@ export async function runEvaluatePipeline(
 
   if (subjectiveMetrics.status !== "ready" && !judgeRequired) {
     warnings.push("主观评估当前为降级模式（LLM judge 调用失败或未启用）。");
+  }
+  const llmTelemetry = consumeLlmRequestTelemetry(options.runId);
+  const llmJudge = buildLlmJudgeRunSummary(options.useLlm, llmTelemetry);
+  if (llmJudge.failedRequests > 0) {
+    markStageDegraded(stageStatuses, "subjective", "llm_judge_failed_requests");
   }
 
   let artifactPath: string | undefined;
@@ -164,6 +181,9 @@ export async function runEvaluatePipeline(
       hasTimestamp: rawRows.every((row) => Boolean(row.timestamp)),
       generatedAt: new Date().toISOString(),
       warnings,
+      runState: buildRunState(stageStatuses, warnings, llmJudge),
+      stageStatuses,
+      llmJudge,
       scenarioContext: options.scenarioContext,
     },
     summaryCards,
@@ -188,6 +208,63 @@ export async function runEvaluatePipeline(
 }
 
 /**
+ * Build response-safe LLM runtime metadata.
+ * @param enabled Whether this evaluate run requested LLM judges.
+ * @param records Request telemetry captured by the LLM client.
+ * @returns Aggregated LLM judge metadata.
+ */
+function buildLlmJudgeRunSummary(
+  enabled: boolean,
+  records: LlmRequestTelemetry[],
+): LlmJudgeRunSummary {
+  const stageGroups = new Map<string, LlmRequestTelemetry[]>();
+  records.forEach((record) => {
+    stageGroups.set(record.stage, [...(stageGroups.get(record.stage) ?? []), record]);
+  });
+
+  return {
+    enabled,
+    totalRequests: records.length,
+    succeededRequests: records.filter((record) => record.status === "success").length,
+    failedRequests: records.filter((record) => record.status === "failed").length,
+    stages: [...stageGroups.entries()].map(([stage, stageRecords]) => ({
+      stage,
+      totalRequests: stageRecords.length,
+      succeededRequests: stageRecords.filter((record) => record.status === "success").length,
+      failedRequests: stageRecords.filter((record) => record.status === "failed").length,
+      avgQueuedMs: averageRounded(stageRecords.map((record) => record.queuedMs)),
+      avgDurationMs: averageRounded(stageRecords.map((record) => record.durationMs)),
+      maxAttempts: Math.max(...stageRecords.map((record) => record.attempts)),
+    })),
+    recentRequests: records.slice(-20).map((record) => ({
+      stage: record.stage,
+      status: record.status,
+      queuedMs: record.queuedMs,
+      durationMs: record.durationMs,
+      attempts: record.attempts,
+      model: record.model,
+      promptVersion: record.promptVersion,
+      sessionId: record.sessionId,
+      segmentId: record.segmentId,
+      errorClass: record.errorClass,
+      degradedReason: record.degradedReason,
+    })),
+  };
+}
+
+/**
+ * Average a list of timing values.
+ * @param values Timing values.
+ * @returns Rounded average, or 0 when empty.
+ */
+function averageRounded(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+/**
  * Run one named evaluation stage and emit observable progress events.
  *
  * @param options Evaluation options containing optional progress callback.
@@ -198,20 +275,77 @@ export async function runEvaluatePipeline(
  */
 async function runEvaluateStage<T>(
   options: EvaluateRunOptions,
+  stageStatuses: EvaluateStageRunStatus[],
   stage: EvaluationStageKey,
   label: string,
   operation: () => Promise<T> | T,
 ): Promise<T> {
   emitProgress(options, { type: "stage", stage, status: "running", message: `${label}进行中` });
+  const startedAt = Date.now();
   try {
     const result = await operation();
+    stageStatuses.push({
+      stage,
+      status: "ready",
+      durationMs: Date.now() - startedAt,
+    });
     emitProgress(options, { type: "stage", stage, status: "done", message: `${label}完成` });
     return result;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    stageStatuses.push({
+      stage,
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      degradedReason: detail,
+    });
     emitProgress(options, { type: "stage", stage, status: "failed", message: `${label}失败`, detail });
     throw error;
   }
+}
+
+/**
+ * Mark a completed stage as degraded while preserving its measured duration.
+ * @param stageStatuses Mutable stage status list.
+ * @param stage Stage to update.
+ * @param reason Stable degraded reason.
+ */
+function markStageDegraded(
+  stageStatuses: EvaluateStageRunStatus[],
+  stage: EvaluationStageKey,
+  reason: string,
+): void {
+  const status = [...stageStatuses].reverse().find((item) => item.stage === stage);
+  if (!status || status.status === "failed") {
+    return;
+  }
+  status.status = "degraded";
+  status.degradedReason = status.degradedReason ? `${status.degradedReason};${reason}` : reason;
+}
+
+/**
+ * Build the response-level run state from warnings and stage metadata.
+ * @param stageStatuses Stage status list.
+ * @param warnings Run warnings.
+ * @param llmJudge LLM judge summary.
+ * @returns Run state.
+ */
+function buildRunState(
+  stageStatuses: EvaluateStageRunStatus[],
+  warnings: string[],
+  llmJudge: LlmJudgeRunSummary,
+): EvaluateRunState {
+  if (stageStatuses.some((stage) => stage.status === "failed")) {
+    return "failed";
+  }
+  if (
+    warnings.length > 0 ||
+    llmJudge.failedRequests > 0 ||
+    stageStatuses.some((stage) => stage.status === "degraded")
+  ) {
+    return "degraded";
+  }
+  return "ready";
 }
 
 /**

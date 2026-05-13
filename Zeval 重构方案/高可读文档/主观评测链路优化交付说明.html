@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>主观评测链路优化交付说明 · Zeval</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0c1320;
+        --panel: rgba(20, 28, 40, 0.86);
+        --panel-strong: rgba(20, 28, 40, 0.96);
+        --border: rgba(120, 144, 180, 0.22);
+        --text: #e7edf6;
+        --text-dim: #97a2b8;
+        --accent: #4cb1ff;
+        --accent-soft: rgba(76, 177, 255, 0.16);
+        --good: #3aa37a;
+        --warn: #c98a2b;
+        --bad: #d35f7d;
+        --llm: #8a5cf2;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background:
+          radial-gradient(1200px 700px at 82% -12%, rgba(76, 177, 255, 0.2), transparent 62%),
+          radial-gradient(900px 640px at -12% 112%, rgba(138, 92, 242, 0.16), transparent 65%),
+          var(--bg);
+        color: var(--text);
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.7;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 250px minmax(0, 1fr);
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+
+      nav.toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        padding: 28px 16px 28px 24px;
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+      }
+      nav.toc h1 {
+        font-size: 16px;
+        margin: 0 0 4px;
+        letter-spacing: 0.4px;
+      }
+      nav.toc .sub {
+        color: var(--text-dim);
+        font-size: 12px;
+        margin-bottom: 18px;
+      }
+      nav.toc ol { padding-left: 18px; margin: 0; }
+      nav.toc li { margin: 6px 0; font-size: 13px; }
+      nav.toc a {
+        color: var(--text);
+        text-decoration: none;
+        opacity: 0.78;
+        transition: 0.2s ease;
+      }
+      nav.toc a:hover { opacity: 1; color: var(--accent); }
+
+      main { padding: 40px 36px 80px; }
+      section { margin-bottom: 56px; scroll-margin-top: 24px; }
+
+      .hero {
+        padding: 36px 32px;
+        background: linear-gradient(135deg, rgba(76, 177, 255, 0.12), rgba(138, 92, 242, 0.12));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        position: relative;
+        overflow: hidden;
+        margin-bottom: 36px;
+        box-shadow: var(--shadow);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -120px;
+        top: -120px;
+        width: 320px;
+        height: 320px;
+        background: radial-gradient(closest-side, rgba(76, 177, 255, 0.32), transparent 70%);
+        filter: blur(10px);
+      }
+      .hero h1 {
+        font-size: 28px;
+        margin: 0 0 8px;
+        letter-spacing: 0.5px;
+        position: relative;
+      }
+      .hero .lead {
+        color: var(--text-dim);
+        font-size: 15px;
+        max-width: 780px;
+        position: relative;
+      }
+      .hero .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+        position: relative;
+      }
+
+      h2 {
+        font-size: 20px;
+        margin: 0 0 14px;
+        letter-spacing: 0.4px;
+      }
+      h3 {
+        font-size: 15px;
+        margin: 22px 0 8px;
+        color: var(--text);
+      }
+      p, li { color: var(--text); font-size: 14px; }
+      .dim { color: var(--text-dim); }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        nav.toc {
+          position: static;
+          height: auto;
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+        .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 20px;
+      }
+      .card.strong { background: var(--panel-strong); box-shadow: var(--shadow); }
+      .card h4 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+      }
+      .card p { margin: 0; color: var(--text-dim); }
+      .card ul { margin: 8px 0 0; padding-left: 18px; }
+      .card li { color: var(--text-dim); }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--text);
+      }
+      .pill.accent { background: var(--accent-soft); border-color: rgba(76, 177, 255, 0.4); }
+      .pill.good { background: rgba(58, 163, 122, 0.18); border-color: rgba(58, 163, 122, 0.5); }
+      .pill.warn { background: rgba(201, 138, 43, 0.18); border-color: rgba(201, 138, 43, 0.5); }
+      .pill.llm { background: rgba(138, 92, 242, 0.18); border-color: rgba(138, 92, 242, 0.5); }
+      .pill.bad { background: rgba(211, 95, 125, 0.18); border-color: rgba(211, 95, 125, 0.5); }
+
+      code, .mono {
+        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      code {
+        color: #d8c8ff;
+        background: rgba(138, 92, 242, 0.12);
+        border: 1px solid rgba(138, 92, 242, 0.24);
+        padding: 1px 5px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+
+      .flow {
+        background: rgba(7, 11, 18, 0.72);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 20px;
+        overflow-x: auto;
+        font-size: 13px;
+        color: #dce7f7;
+      }
+      .flow code {
+        display: block;
+        white-space: pre;
+        background: transparent;
+        border: 0;
+        padding: 0;
+        color: inherit;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        background: rgba(20, 28, 40, 0.72);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        font-size: 13px;
+      }
+      th, td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        border-right: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        text-align: left;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+      }
+      td { color: var(--text-dim); }
+      tr:last-child td { border-bottom: 0; }
+      th:last-child, td:last-child { border-right: 0; }
+
+      .answer {
+        border-left: 3px solid var(--accent);
+        padding: 12px 14px;
+        background: rgba(76, 177, 255, 0.08);
+        border-radius: 0 12px 12px 0;
+        margin: 12px 0;
+      }
+      .answer strong { color: #bfe4ff; }
+      .ok { color: #7bd7b0; }
+      .warn-text { color: #f0b763; }
+      .bad-text { color: #ee8aa1; }
+      .footer {
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav class="toc">
+        <h1>主观链路优化交付</h1>
+        <div class="sub">上传日志 → Topic → LLM Judge</div>
+        <ol>
+          <li><a href="#summary">交付结论</a></li>
+          <li><a href="#scope">范围与边界</a></li>
+          <li><a href="#pipeline">链路现状说明</a></li>
+          <li><a href="#source-review">第三项源码复核</a></li>
+          <li><a href="#changes">做了什么</a></li>
+          <li><a href="#answers-41">4.1 并发与队列</a></li>
+          <li><a href="#answers-42">4.2 汇总与语义</a></li>
+          <li><a href="#answers-43">4.3 报错与降级</a></li>
+          <li><a href="#deliverables">第五项产出清单</a></li>
+          <li><a href="#rubric">第六项共识维度</a></li>
+          <li><a href="#validation">验证与 PR</a></li>
+        </ol>
+      </nav>
+
+      <main>
+        <header class="hero" id="summary">
+          <h1>上传至主观评测链路优化：交付说明</h1>
+          <p class="lead">
+            本页面面向协作复盘：说明从对话日志进入评估链路开始，到主观指标含 LLM Judge 完成之间，
+            我们实际实现了哪些优化，并逐条回答协作文档提出的并发、汇总、降级与可观测问题。
+          </p>
+          <div class="pill-row">
+            <span class="pill good">已实现 topic 切分</span>
+            <span class="pill llm">LLM Judge 有界并发</span>
+            <span class="pill accent">全局并发池</span>
+            <span class="pill warn">降级状态可观测</span>
+            <span class="pill good">PR 已提交</span>
+          </div>
+        </header>
+
+        <section id="scope">
+          <h2>一、范围与边界</h2>
+          <div class="grid-2">
+            <div class="card strong">
+              <h4>本轮处理的链路</h4>
+              <p>
+                只处理上传后的评估主链路：raw chatlog 进入 normalize、topic 切分、分段情绪补全、
+                客观指标、主观指标、LLM Judge、汇总与响应 metadata。
+              </p>
+            </div>
+            <div class="card">
+              <h4>本轮不处理的内容</h4>
+              <p>
+                不处理在线回放范式、调优包、中转站、供应商多活、持久化熔断状态，也不实现当前链路中不存在的
+                <code>auto_disagreement</code> 双轨评估冲突。
+              </p>
+            </div>
+          </div>
+
+          <div class="answer">
+            <strong>核心判断：</strong>
+            当前系统是 fused pipeline：客观补全先产生中间层，主观指标再引用这些中间层。
+            它不是规则轨与 LLM 轨并行裁决同一 case 的双轨架构，因此“评估器冲突”只能作为 Post-MVP 预留。
+          </div>
+        </section>
+
+        <section id="pipeline">
+          <h2>二、链路现状说明</h2>
+          <div class="flow">
+            <code>rawRows
+  -> normalizeRawRows
+  -> buildTopicSegments
+       -> topic_continuity_review?        [LLM, 长间隔时触发]
+  -> scoreTopicSegmentEmotions
+       -> segment_emotion_baseline?       [LLM, 每个 topic segment 可触发]
+  -> buildObjectiveMetrics                [规则]
+  -> buildSubjectiveMetrics
+       -> buildImplicitSignals            [规则]
+       -> buildGoalCompletions
+            -> goal_completion_judge?     [LLM, unclear 才触发]
+       -> buildRecoveryTraces
+            -> recovery_trace_strategy?   [LLM, completed trace 才触发]
+       -> subjective_dimension_judge?     [LLM, session 级四维 Judge]
+  -> aggregation / charts / suggestions / response meta</code>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>代码入口</th>
+                <th>LLM stage</th>
+                <th>并发与失败行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>normalize</td>
+                <td><code>src/pipeline/normalize.ts</code></td>
+                <td>无</td>
+                <td>本地规则，输出稳定 turnIndex、timestampMs、activeHour。</td>
+              </tr>
+              <tr>
+                <td>topic 切分</td>
+                <td><code>src/pipeline/segmenter.ts</code></td>
+                <td><code>topic_continuity_review</code></td>
+                <td>
+                  单 session 内顺序切分；跨 session 使用 <code>ZEVAL_JUDGE_TOPIC_CONCURRENCY</code> 有界并发；
+                  LLM 请求进入全局池。强调用失败会让 parse stage 失败。
+                </td>
+              </tr>
+              <tr>
+                <td>分段情绪补全</td>
+                <td><code>src/pipeline/emotion.ts</code></td>
+                <td><code>segment_emotion_baseline</code></td>
+                <td>
+                  使用 <code>ZEVAL_JUDGE_SEGMENT_CONCURRENCY</code> 有界并发；
+                  单 segment LLM 失败回退规则情绪基线。
+                </td>
+              </tr>
+              <tr>
+                <td>目标完成</td>
+                <td><code>src/pipeline/goalCompletion.ts</code></td>
+                <td><code>goal_completion_judge</code></td>
+                <td>
+                  规则硬信号优先，只有 unclear 才调 LLM；多 session 使用
+                  <code>ZEVAL_JUDGE_GOAL_CONCURRENCY</code> 有界并发。
+                </td>
+              </tr>
+              <tr>
+                <td>恢复轨迹</td>
+                <td><code>src/pipeline/recoveryTrace.ts</code></td>
+                <td><code>recovery_trace_strategy</code></td>
+                <td>
+                  依赖 goal completion；仅 completed trace 调 LLM 总结修复策略；
+                  使用 <code>ZEVAL_JUDGE_RECOVERY_CONCURRENCY</code> 有界并发。
+                </td>
+              </tr>
+              <tr>
+                <td>四维主观 Judge</td>
+                <td><code>src/pipeline/subjectiveMetrics.ts</code></td>
+                <td><code>subjective_dimension_judge</code></td>
+                <td>
+                  session 级单次调用，transcript 内包含多个 topic segment；
+                  多 session 使用 <code>ZEVAL_JUDGE_SESSION_CONCURRENCY</code> 有界并发。
+                </td>
+              </tr>
+              <tr>
+                <td>全局 LLM 请求池</td>
+                <td><code>src/lib/siliconflow.ts</code></td>
+                <td>所有 LLM stage</td>
+                <td>
+                  所有 LLM 请求共享 <code>ZEVAL_JUDGE_GLOBAL_CONCURRENCY</code>，并记录
+                  queuedMs、durationMs、attempts、errorClass、degradedReason。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="source-review">
+          <h2>三、对协作文档第三项的源码级复核回答</h2>
+          <p class="dim">
+            协作文档第三项要求复核“当前实现速览”。下面按 3.1、3.2、3.3 三块，用源码粒度回答现在到底怎么做、这次改了什么、设计取舍是什么。
+          </p>
+
+          <h3>3.1 Enrich：切分与分段情绪是怎么实现的？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            已完整实现 <code>normalize -> topic segment -> segment emotion -> enrichedRows</code>。
+            topic 切分现在是“规则优先 + 长间隔 LLM continuity 辅助 + 单 session 内顺序 + 跨 session 有界并发”；
+            分段情绪现在是“每个 topic segment 可 LLM 评情绪基线 + 本地权重修正 + 有界并发 + 失败规则回退”。
+          </div>
+
+          <div class="flow">
+            <code>src/pipeline/enrich.ts
+  enrichRows(rawRows, useLlm, runId)
+    -> normalizeRawRows(rawRows)
+    -> buildTopicSegments(normalizedRows, useLlm, runId)
+    -> scoreTopicSegmentEmotions(rawTopicSegments, normalizedRows, useLlm, runId)
+    -> enrichedRows 写入 topic / topicSegmentId / topicSummary / emotionScore / responseGapSec / isTopicSwitch</code>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>实现位置</th>
+                <th>当前实现</th>
+                <th>本次优化</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>normalize</td>
+                <td><code>normalizeRawRows</code></td>
+                <td>
+                  统一 session 内 turnIndex、timestampMs、activeHour 等基础字段，为后续切分和时序指标提供稳定输入。
+                </td>
+                <td>保持规则实现，不引入 LLM，保证可复现。</td>
+              </tr>
+              <tr>
+                <td>topic 切分</td>
+                <td><code>buildTopicSegments</code> / <code>buildSessionTopicSegments</code></td>
+                <td>
+                  先按 <code>sessionId</code> 分组；单 session 内维护 <code>activeSegment</code>，逐 row 判断是否切新 topic。
+                  规则会识别“另外、换个、再问、错了、不对、没回答”等切换或断裂表达；“继续、接着、上次、刚才”等显式延续会阻止切分。
+                </td>
+                <td>
+                  新增 <code>ZEVAL_JUDGE_TOPIC_CONCURRENCY</code>：不同 session 可并发切分；单 session 内仍顺序，避免破坏 active segment 的上下文依赖。
+                </td>
+              </tr>
+              <tr>
+                <td>长间隔 continuity LLM</td>
+                <td><code>reviewLongGapTopicContinuation</code></td>
+                <td>
+                  仅当 <code>gapSec >= 180</code>、<code>useLlm=true</code>、且不是显式 continuation 时调用。
+                  LLM 只回答“当前 row 是否仍是 active segment 的延续”，不负责重做完整 topic 分类。
+                </td>
+                <td>
+                  LLM 请求进入 <code>ZEVAL_JUDGE_GLOBAL_CONCURRENCY</code> 全局池，避免多个阶段叠加打爆供应商。
+                </td>
+              </tr>
+              <tr>
+                <td>分段情绪补全</td>
+                <td><code>scoreTopicSegmentEmotions</code></td>
+                <td>
+                  每个 topic segment 先得到 LLM 或规则情绪基线，再叠加 valence、length、style、gap、recovery、risk penalty 等本地权重，生成最终 <code>emotionScore</code>。
+                </td>
+                <td>
+                  从无界 <code>Promise.all</code> 改为 <code>ZEVAL_JUDGE_SEGMENT_CONCURRENCY</code> 有界并发；
+                  单 segment LLM 失败时回退规则情绪基线，不拖垮整个评估。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>权衡：</strong>
+            topic 切分没有改成“全量 LLM 分类”，因为瘦日志场景下大部分 topic 边界可由规则稳定识别；
+            LLM 只用于长间隔 continuity 这种规则不稳定点。这样降低成本和漂移，同时保留必要的语义判断能力。
+          </div>
+
+          <h3>3.2 主观指标与汇总是怎么实现的？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            主观指标现在不是单一 Judge，而是由三条输出组成：
+            <code>goalCompletions</code>、<code>recoveryTraces</code>、<code>subjective dimension judge</code>。
+            本次已把多 session LLM 调用从串行或局部并发，统一改成阶段级有界并发 + 全局池；同时补了 session 级明细与聚合 metadata。
+          </div>
+
+          <div class="flow">
+            <code>src/pipeline/subjectiveMetrics.ts
+  buildSubjectiveMetrics(enrichedRows, useLlm, runId)
+    -> buildImplicitSignals(enrichedRows)                         [规则]
+    -> buildGoalCompletions(enrichedRows, useLlm, runId)          [规则优先，unclear 才 LLM]
+    -> buildRecoveryTraces(enrichedRows, goalCompletions, useLlm) [依赖 goal，completed 才 LLM]
+    -> subjective_dimension_judge                                 [session 级四维 Judge]
+    -> aggregateDimensionReviews + dimensionBreakdowns + aggregation</code>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>主观子阶段</th>
+                <th>LLM 触发条件</th>
+                <th>并发设计</th>
+                <th>失败行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>goal completion</td>
+                <td>
+                  先用规则判断 achieved / failed / partial；只有 <code>unclear</code> 才调用
+                  <code>goal_completion_judge</code>。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_GOAL_CONCURRENCY</code>；
+                  每次 LLM 请求仍进入全局池。
+                </td>
+                <td>
+                  <code>judgeRequired=false</code> 时回退规则结果并追加 fallback 标记；
+                  <code>judgeRequired=true</code> 时抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>recovery trace</td>
+                <td>
+                  先用规则找失败点和恢复点；只有 <code>status=completed</code> 时才调用
+                  <code>recovery_trace_strategy</code> 总结修复策略。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_RECOVERY_CONCURRENCY</code>；
+                  recovery 依赖 goal completion，因此仍等待 goal 结果。
+                </td>
+                <td>
+                  LLM 失败时保留规则 trace；严格模式下抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>四维 subjective Judge</td>
+                <td>
+                  <code>useLlm=true</code> 时按 session 调 <code>subjective_dimension_judge</code>。
+                  单次输入会把同一 session 下多个 topic segment 拼进 transcript。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_SESSION_CONCURRENCY</code>；
+                  四维 Judge 与 goal completion -> recovery trace 链并行启动。
+                </td>
+                <td>
+                  单 session Judge 失败时，宽松模式回退规则四维；严格模式抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>四维聚合</td>
+                <td>不调用 LLM。</td>
+                <td>本地聚合。</td>
+                <td>
+                  保留原有 <code>dimensions</code> 全局摘要；
+                  新增 <code>dimensionBreakdowns</code> 和 <code>aggregation</code> 解释权重、来源和聚合口径。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>为什么不把四维 Judge 拆到每个 segment？</strong>
+            当前产品需要的是 session 级主观评测结论；四维 Judge 判断“共情、答非所问、说教感、恢复能力”时需要跨轮上下文。
+            segment 级拆分会增加调用数、降低上下文完整性、引入更复杂的多 segment 聚合语义。
+            因此本轮保持 session 级 Judge，同时通过 <code>dimensionBreakdowns.topicSegmentIds</code> 为后续 topic 级展示留接口。
+          </div>
+
+          <h3>3.3 API 与异步现在是什么情况？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            <code>app/api/evaluate/route.ts</code> 已支持同步 JSON、<code>stream=1</code> SSE、<code>asyncMode</code> 入队。
+            三种入口复用同一条 <code>runEvaluatePipeline</code>，差异主要是交互形态和错误返回方式。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>入口形态</th>
+                <th>怎么运行</th>
+                <th>成功结果</th>
+                <th>失败 / 降级语义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>同步 JSON</td>
+                <td>请求内直接执行 <code>runEvaluatePipeline</code>。</td>
+                <td>返回完整 evaluate response。</td>
+                <td>
+                  主链路硬失败返回 500；projection / result persistence 失败写入
+                  <code>meta.warnings</code> 并标记 <code>runState=degraded</code>，不阻断 200。
+                </td>
+              </tr>
+              <tr>
+                <td>SSE：<code>stream=1</code></td>
+                <td>同一 pipeline，但通过 <code>onProgress</code> 推送 stage running / done / failed。</td>
+                <td>最后发送 <code>type=result</code>。</td>
+                <td>硬失败发送 <code>type=error</code>；非阻塞写入失败仍进入 result warnings。</td>
+              </tr>
+              <tr>
+                <td>异步：<code>asyncMode</code></td>
+                <td>先入本地 job，worker 再执行 evaluate job。</td>
+                <td>job success 中返回评估摘要和 warnings。</td>
+                <td>
+                  主链路硬失败标记 job failed；projection / 保存失败只追加 warnings，job 仍可成功。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <thead>
+              <tr>
+                <th><code>useLlm</code></th>
+                <th><code>judgeRequired</code></th>
+                <th>链路行为</th>
+                <th>用户可见结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>true</td>
+                <td>true</td>
+                <td>LLM Judge 是强依赖，失败即抛错。</td>
+                <td>同步 500 / SSE error / async job failed。</td>
+              </tr>
+              <tr>
+                <td>true</td>
+                <td>false</td>
+                <td>LLM 失败时 session 级规则回退。</td>
+                <td>200 或 job success；<code>subjectiveMetrics.status=degraded</code>；<code>meta.llmJudge.failedRequests &gt; 0</code>。</td>
+              </tr>
+              <tr>
+                <td>false</td>
+                <td>false</td>
+                <td>不调用 LLM，全部走规则模式。</td>
+                <td>200 或 job success；<code>meta.llmJudge.enabled=false</code>；主观状态 degraded。</td>
+              </tr>
+              <tr>
+                <td>false</td>
+                <td>true</td>
+                <td>入口拒绝，pipeline 也保护性抛错。</td>
+                <td>400，不产出评估结果。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>为什么这样设计：</strong>
+            API 层不把“部分降级”混同为“硬失败”。只要主评估结果可用，就保留 200 / result / job success，
+            通过 <code>meta.runState</code>、<code>stageStatuses</code>、<code>warnings</code> 告知降级；
+            只有调用方明确要求 <code>judgeRequired=true</code> 或主链路无法产出结果时，才硬失败。
+          </div>
+        </section>
+
+        <section id="changes">
+          <h2>四、我们做了什么</h2>
+          <div class="grid-3">
+            <div class="card">
+              <h4>1. topic 与 emotion 补全</h4>
+              <p>
+                完成按 session 顺序构建 topic；长间隔处可触发 continuity LLM。
+                分段情绪从无界 <code>Promise.all</code> 改为有界并发。
+              </p>
+            </div>
+            <div class="card">
+              <h4>2. 主观指标并发</h4>
+              <p>
+                goal completion、recovery trace、四维 Judge 都改为 session 级有界并发。
+                四维 Judge 与 goal→recovery 链并行启动。
+              </p>
+            </div>
+            <div class="card">
+              <h4>3. 全局并发池</h4>
+              <p>
+                所有 SiliconFlow / OpenAI-compatible 请求共享进程内全局池，
+                避免多个阶段叠加后打爆供应商限流。
+              </p>
+            </div>
+            <div class="card">
+              <h4>4. 降级与状态机</h4>
+              <p>
+                新增 <code>meta.runState</code>、<code>meta.stageStatuses</code>、
+                <code>meta.llmJudge</code>，区分完整成功、部分降级和硬失败。
+              </p>
+            </div>
+            <div class="card">
+              <h4>5. 聚合解释性</h4>
+              <p>
+                新增 <code>dimensionBreakdowns</code> 与 <code>aggregation</code>，
+                保留原有四维全局摘要，同时给出 session 级明细。
+              </p>
+            </div>
+            <div class="card">
+              <h4>6. 重试与熔断</h4>
+              <p>
+                已实现重试、指数退避、错误分类、stage-local 轻量熔断；
+                熔断命中沿用原有降级或抛错策略。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="answers-41">
+          <h2>五、明确回答 4.1：并发与队列</h2>
+
+          <h3>问题 1：分段情绪 LLM 与 session 级主观 Judge 应共享全局并发池还是分阶段独立 limit？</h3>
+          <div class="answer">
+            <strong>答案：共享全局并发池，同时保留阶段级 limit。</strong>
+            阶段级 limit 控制某一类任务的排队形态；全局池控制实际打到模型网关的请求总数。
+            这样既避免 segment emotion 抢占全部资源，也避免多个阶段并发叠加后超过供应商限流。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>设计选择</th>
+                <th>为什么这样设计</th>
+                <th>放弃了什么</th>
+                <th>风险与缓解</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>阶段级 limit + 全局池</td>
+                <td>
+                  阶段级 limit 让 topic、emotion、goal、recovery、dimension 各自可控；
+                  全局池保证实际供应商请求不会被多个阶段叠加打爆。
+                </td>
+                <td>
+                  放弃“每个阶段独立放开并发”的最低延迟幻想，因为它会把限流风险转移给供应商 API。
+                </td>
+                <td>
+                  队列可能增加单个请求等待时间；用 <code>queuedMs</code>、<code>avgQueuedMs</code> 暴露排队压力，
+                  后续可按数据调大或调小各阶段 limit。
+                </td>
+              </tr>
+              <tr>
+                <td>跨 session 并发，单 session 内顺序</td>
+                <td>
+                  topic 切分中 active segment 依赖前一轮判断，单 session 内并发会破坏切分语义；
+                  不同 session 互不依赖，因此可以并发。
+                </td>
+                <td>
+                  放弃“每条消息都并行切分”的极端速度方案。
+                </td>
+                <td>
+                  单个超长 session 仍会成为局部慢点；后续如遇到超长日志，可再做 session 内窗口化切分。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <thead>
+              <tr>
+                <th>配置</th>
+                <th>作用</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ZEVAL_JUDGE_GLOBAL_CONCURRENCY</code></td>
+                <td>所有 LLM 请求共享的供应商侧总并发上限。</td>
+              </tr>
+              <tr>
+                <td><code>ZEVAL_JUDGE_TOPIC_CONCURRENCY</code></td>
+                <td>跨 session topic continuity review 的并发上限；单 session 内仍顺序。</td>
+              </tr>
+              <tr>
+                <td><code>ZEVAL_JUDGE_SEGMENT_CONCURRENCY</code></td>
+                <td>segment emotion baseline 的阶段内并发上限。</td>
+              </tr>
+              <tr>
+                <td><code>ZEVAL_JUDGE_SESSION_CONCURRENCY</code></td>
+                <td>四维 subjective dimension judge 的 session 并发上限。</td>
+              </tr>
+              <tr>
+                <td><code>ZEVAL_JUDGE_GOAL_CONCURRENCY</code> / <code>ZEVAL_JUDGE_RECOVERY_CONCURRENCY</code></td>
+                <td>目标完成与恢复轨迹 LLM 阶段的并发上限。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>问题 2：哪些阶段适合异步化，哪些必须阻塞在单次评估响应内？SLA 与可观测字段怎么定义？</h3>
+          <div class="answer">
+            <strong>答案：MVP 中，生成当次评估结果所必需的阶段继续阻塞；可复算、可后补、可投影的阶段异步化。</strong>
+            当前同步 / SSE / asyncMode 都复用同一条 pipeline；projection 与结果保存失败只进入 warnings，不阻断主响应。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>设计选择</th>
+                <th>为什么这样设计</th>
+                <th>没有选择的方案</th>
+                <th>权衡结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>主结果链路阻塞，投影和保存非阻塞</td>
+                <td>
+                  用户点击评估后需要拿到同一份完整报告；normalize、topic、emotion、objective、subjective 都是报告内容本身。
+                  projection 和保存只是后续检索、落库、复盘能力，不应该让一次评估因为写库失败而整体失败。
+                </td>
+                <td>
+                  全链路都异步化，用户只拿 jobId；或者所有落库失败都让请求 500。
+                </td>
+                <td>
+                  当前体验更直接：小样本同步可用，大样本可用 asyncMode；写入失败通过 warnings 和 runState=degraded 告知。
+                </td>
+              </tr>
+              <tr>
+                <td>SSE / asyncMode 复用同一 pipeline</td>
+                <td>
+                  避免三套入口出现不同评估口径；同步 JSON、SSE、async job 只是在交互形态上不同。
+                </td>
+                <td>
+                  为 async job 单独实现一套离线逻辑。
+                </td>
+                <td>
+                  牺牲一些针对离线批量的极致吞吐，但换来口径一致和更低维护成本。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>是否阻塞单次响应</th>
+                <th>是否适合异步化</th>
+                <th>理由</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>normalize / topic segment</td>
+                <td>是</td>
+                <td>否</td>
+                <td>后续 enriched rows、图表和主观 Judge 都依赖它。</td>
+              </tr>
+              <tr>
+                <td>segment emotion</td>
+                <td>是</td>
+                <td>部分可后置</td>
+                <td>当前情绪曲线、恢复判断和四维 Judge 输入依赖情绪分。</td>
+              </tr>
+              <tr>
+                <td>objective metrics / implicit signals</td>
+                <td>是</td>
+                <td>否</td>
+                <td>本地规则成本低，是主观指标和建议生成基础。</td>
+              </tr>
+              <tr>
+                <td>goal completion / recovery trace / subjective dimensions</td>
+                <td>是</td>
+                <td>批量场景可 job</td>
+                <td>工作台需要当次看到主观结论；大批量评测可走 asyncMode。</td>
+              </tr>
+              <tr>
+                <td>evaluation projection / result persistence</td>
+                <td>否</td>
+                <td>是</td>
+                <td>失败已进入 warnings，不阻断 200 / SSE result / job success。</td>
+              </tr>
+              <tr>
+                <td>badcase 入池与后续数据集维护</td>
+                <td>否</td>
+                <td>是</td>
+                <td>候选入池可异步重试，避免拖慢用户侧反馈。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="grid-2">
+            <div class="card">
+              <h4>SLA 建议</h4>
+              <ul>
+                <li>同步工作台小样本目标 30-60 秒返回。</li>
+                <li>超过阈值建议走 <code>asyncMode</code>。</li>
+                <li>SSE 必须持续发 stage running / done / failed。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>可观测字段</h4>
+              <ul>
+                <li>stage：<code>status / durationMs / degradedReason</code></li>
+                <li>LLM：<code>queuedMs / durationMs / attempts / errorClass</code></li>
+                <li>job：<code>queuedAt / startedAt / finishedAt / lastError</code></li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>问题 3：是否应按 segment 拆分四维 Judge，还是保留 session 级单次调用？</h3>
+          <div class="answer">
+            <strong>答案：MVP 保留 session 级单次调用。</strong>
+            四维 Judge 的输入会把同一 session 下的多个 topic segment 拼入 transcript，
+            这样保留上下文完整性、调用次数更低、API 契约稳定。只有出现长会话 token 超限或产品明确需要“每个 topic 的四维评分”时，再引入 segment 级 Judge。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>方案</th>
+                <th>优点</th>
+                <th>风险</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>session 级 Judge（当前）</td>
+                <td>上下文完整；调用次数低；聚合简单；契约稳定。</td>
+                <td>长 session token 较高；失败粒度较粗。</td>
+              </tr>
+              <tr>
+                <td>segment 级 Judge</td>
+                <td>失败粒度细；可局部重试；可按 topic 展示。</td>
+                <td>调用数显著增加；跨 topic 上下文丢失；聚合语义复杂。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>权衡结论：</strong>
+            本轮优化的目标是“上传后尽快得到稳定可解释的主观指标”，不是把每个 topic 都变成独立主观报告。
+            因此四维 Judge 保持 session 级更符合当前产品语义；segment 级结果先通过
+            <code>dimensionBreakdowns.topicSegmentIds</code> 建立关联，给未来升级留位置。
+          </div>
+        </section>
+
+        <section id="answers-42">
+          <h2>六、明确回答 4.2：数据汇总与语义</h2>
+
+          <h3>问题 4：多 session、多 segment 的四维聚合是否满足业务可解释性？如何兼容 API 与前端？</h3>
+          <div class="answer">
+            <strong>答案：当前聚合可作为 MVP 全局摘要，但不能当作严格统计结论；因此已补充 session 级明细和聚合口径 metadata。</strong>
+            原有 <code>subjectiveMetrics.dimensions</code> 保持不变，前端不需要立刻改；
+            新增 <code>dimensionBreakdowns</code> 和 <code>aggregation</code> 支持展开解释和后续前端升级。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>现在怎么做</th>
+                <th>业务含义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dimensions</code></td>
+                <td>保留全局四维摘要。</td>
+                <td>保证现有 API 与前端展示兼容。</td>
+              </tr>
+              <tr>
+                <td><code>dimensionBreakdowns</code></td>
+                <td>按 session 输出原始四维 review、weight、source、succeeded、topicSegmentIds。</td>
+                <td>让长 session 权重、失败回退、证据来源可解释。</td>
+              </tr>
+              <tr>
+                <td><code>aggregation</code></td>
+                <td>声明 <code>session_row_weighted_average</code>、<code>session_row_count</code>、证据合并限制。</td>
+                <td>让消费方知道这是加权近似摘要，不是人工标注真值。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <thead>
+              <tr>
+                <th>设计选择</th>
+                <th>为什么这样设计</th>
+                <th>放弃了什么</th>
+                <th>风险与缓解</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>保留全局摘要，追加 session 明细</td>
+                <td>
+                  当前前端和 API 消费方已经依赖 <code>dimensions</code>；
+                  直接改成多 session / 多 segment 结构会破坏展示与下游契约。
+                </td>
+                <td>
+                  放弃“这次直接重做主观指标数据结构”的方案。
+                </td>
+                <td>
+                  全局摘要仍会隐藏少数 session 的异常；通过 <code>dimensionBreakdowns</code> 暴露原始 session 级结果，
+                  让前端后续可以展开查看。
+                </td>
+              </tr>
+              <tr>
+                <td>按 session 行数加权</td>
+                <td>
+                  行数越多代表该 session 在上传日志中占比越高，作为 MVP 权重容易解释，也不需要额外业务字段。
+                </td>
+                <td>
+                  放弃按用户价值、case 难度、人工标签置信度加权，因为当前瘦日志没有这些稳定字段。
+                </td>
+                <td>
+                  长 session 可能放大权重；通过 <code>aggregation.weightBasis</code> 明示口径，
+                  并保留 breakdown 给后续改成 capped weight 或 badcase-priority weight。
+                </td>
+              </tr>
+              <tr>
+                <td>reason / evidence 近似合并</td>
+                <td>
+                  全局摘要需要短文本，不能把每个 session 的证据全部塞进主卡片。
+                </td>
+                <td>
+                  放弃在摘要层展示完整证据链。
+                </td>
+                <td>
+                  摘要可能解释不完整；完整证据留在 <code>dimensionBreakdowns.dimensions</code> 中，
+                  摘要层只承担快速浏览。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>问题 5：隐式信号、客观指标与主观 Judge 的因果顺序是否应显式化？</h3>
+          <div class="answer">
+            <strong>答案：应该，而且已经显式化。</strong>
+            文档中写明阶段顺序；运行时响应新增 <code>meta.stageStatuses</code> 与
+            <code>meta.llmJudge</code>，可看到每个 stage 的状态、耗时、LLM 请求统计和降级原因。
+          </div>
+
+          <div class="flow">
+            <code>客观补全：normalize -> topic -> emotion -> objective metrics
+主观输入：implicit signals + enriched rows + goal/recovery context
+主观输出：goalCompletions + recoveryTraces + dimensions
+汇总输出：aggregation + dimensionBreakdowns + meta.runState + meta.llmJudge</code>
+          </div>
+        </section>
+
+        <section id="answers-43">
+          <h2>七、明确回答 4.3：报错、降级与产品一致性</h2>
+
+          <h3>问题 6：当前降级路径对用户可见字段有什么影响？</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>场景</th>
+                <th>HTTP / Job 行为</th>
+                <th>用户可见字段</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>useLlm=false, judgeRequired=false</code></td>
+                <td>评估成功</td>
+                <td><code>subjectiveMetrics.status=degraded</code>；<code>meta.llmJudge.enabled=false</code>；warnings 有主观降级提示。</td>
+              </tr>
+              <tr>
+                <td><code>useLlm=false, judgeRequired=true</code></td>
+                <td>入口 400；pipeline 也保护性抛错</td>
+                <td>返回 error，不产出评估结果。</td>
+              </tr>
+              <tr>
+                <td>单 session LLM 失败且 <code>judgeRequired=false</code></td>
+                <td>评估成功</td>
+                <td>对应 session 回退规则结果；<code>subjectiveMetrics.status=degraded</code>；<code>meta.llmJudge.failedRequests &gt; 0</code>。</td>
+              </tr>
+              <tr>
+                <td>LLM 失败且 <code>judgeRequired=true</code></td>
+                <td>硬失败</td>
+                <td>同步 JSON 500；SSE <code>type=error</code>；async job failed。</td>
+              </tr>
+              <tr>
+                <td>projection / result persistence 失败</td>
+                <td>主评估成功</td>
+                <td><code>meta.warnings</code> 追加原因；<code>meta.runState=degraded</code>；不阻断 200 / SSE result / job success。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>问题 7：API 是否需要区分“部分降级仍可 200”和“硬失败 5xx”？如何落在响应 JSON？</h3>
+          <div class="answer">
+            <strong>答案：需要，且已落在 <code>meta</code>。</strong>
+            HTTP 契约保持兼容：可用结果继续 200，硬失败才 5xx；细粒度状态通过
+            <code>meta.runState</code> 与 <code>meta.stageStatuses</code> 表达。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>设计选择</th>
+                <th>为什么这样设计</th>
+                <th>放弃了什么</th>
+                <th>风险与缓解</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>部分降级仍返回 200</td>
+                <td>
+                  用户上传后最需要的是可用评估结果；如果主链路已经完成，只因某个 LLM session 或 projection 失败就 500，
+                  会让用户失去已有的客观指标、规则结果和图表。
+                </td>
+                <td>
+                  放弃“只要任何非核心步骤失败就整体失败”的强一致接口。
+                </td>
+                <td>
+                  200 可能掩盖质量下降；用 <code>runState=degraded</code>、warnings 和
+                  <code>stageStatuses.degradedReason</code> 明确告诉前端和用户。
+                </td>
+              </tr>
+              <tr>
+                <td><code>judgeRequired=true</code> 时硬失败</td>
+                <td>
+                  有些使用方要求 LLM Judge 是强依赖，这时规则 fallback 不能冒充主观评测完成。
+                </td>
+                <td>
+                  放弃“一律降级成功”的宽松策略。
+                </td>
+                <td>
+                  强依赖模式可用性更低；通过请求参数让调用方自己选择严格性。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="flow">
+            <code>{
+  "meta": {
+    "runState": "ready | degraded | failed",
+    "stageStatuses": [
+      {
+        "stage": "subjective",
+        "status": "ready | degraded | failed",
+        "durationMs": 1234,
+        "degradedReason": "llm_judge_failed_requests"
+      }
+    ],
+    "llmJudge": {
+      "totalRequests": 12,
+      "failedRequests": 1,
+      "stages": [
+        { "stage": "subjective_dimension_judge", "avgQueuedMs": 30, "avgDurationMs": 1800 }
+      ]
+    }
+  }
+}</code>
+          </div>
+
+          <h3>问题 8：429、超时、JSON 解析失败如何重试、熔断、退避？MVP 边界是什么？</h3>
+          <div class="answer">
+            <strong>答案：已实现重试、退避、错误分类和进程内 stage-local 轻量熔断。</strong>
+            408 / 409 / 425 / 429 / 5xx / timeout / network 会按 <code>ZEVAL_JUDGE_RETRY_ATTEMPTS</code> 重试；
+            延迟使用指数退避加 jitter；JSON 解析失败、无有效内容等非瞬态错误不重试。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>能力</th>
+                <th>当前实现</th>
+                <th>MVP 边界</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>重试</td>
+                <td><code>ZEVAL_JUDGE_RETRY_ATTEMPTS</code>，默认 3。</td>
+                <td>只对可恢复错误重试。</td>
+              </tr>
+              <tr>
+                <td>退避</td>
+                <td>指数退避 + jitter。</td>
+                <td>避免瞬时限流继续打爆供应商。</td>
+              </tr>
+              <tr>
+                <td>错误分类</td>
+                <td><code>rate_limited / timeout / provider_4xx / provider_5xx / invalid_response / network / circuit_open</code></td>
+                <td>进入 <code>meta.llmJudge.recentRequests</code>，便于排障。</td>
+              </tr>
+              <tr>
+                <td>熔断</td>
+                <td><code>ZEVAL_JUDGE_CIRCUIT_BREAKER_FAILURES</code> + <code>ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS</code></td>
+                <td>当前为进程内 stage-local；不做跨实例持久化熔断。</td>
+              </tr>
+              <tr>
+                <td>供应商多活</td>
+                <td>未做</td>
+                <td>Post-MVP，避免本轮引入更大运维面。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>熔断权衡：</strong>
+            本轮选择进程内 stage-local 熔断，而不是持久化全局熔断。原因是 MVP 先解决“同一进程内连续失败还继续排队请求”的资源浪费；
+            持久化熔断需要跨实例共享状态、供应商健康检查和恢复策略，运维复杂度更高。当前风险是多实例部署时每个实例会独立判断熔断；
+            这被列为 Post-MVP，后续可以基于 <code>judge_runs</code> 或集中式状态存储升级。
+          </div>
+        </section>
+
+        <section id="deliverables">
+          <h2>八、对应第五项：协作产出清单</h2>
+          <div class="grid-2">
+            <div class="card strong">
+              <h4>《链路现状说明》</h4>
+              <p>
+                已用阶段表说明：阶段、代码入口、LLM stage、输入粒度、并发形态、失败行为。
+                关键文档是 <code>docs/subjective-pipeline-optimization.md</code> 和本 HTML。
+              </p>
+            </div>
+            <div class="card strong">
+              <h4>《优化方案》</h4>
+              <p>
+                Top 3 已落地：LLM 有界并发 + 全局池；状态机与观测；四维聚合明细与解释口径。
+              </p>
+            </div>
+            <div class="card">
+              <h4>《降级与观测》</h4>
+              <p>
+                已实现 <code>meta.runState</code>、<code>stageStatuses</code>、<code>llmJudge</code>、
+                warnings 语义、错误分类和 stage-local 熔断。
+              </p>
+            </div>
+            <div class="card">
+              <h4>《实施切片》</h4>
+              <p>
+                已拆成多个 commit / PR 切片：并发工具、LLM telemetry、API warning、设计文档、状态 metadata、topic 与 subjective 并行优化。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="rubric">
+          <h2>九、对应第六项：共识维度检查</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>维度</th>
+                <th>本次交付如何满足</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>源码对齐</td>
+                <td>
+                  结论均能追溯到 <code>evaluateRun.ts</code>、<code>segmenter.ts</code>、<code>emotion.ts</code>、
+                  <code>subjectiveMetrics.ts</code>、<code>goalCompletion.ts</code>、<code>recoveryTrace.ts</code>、
+                  <code>siliconflow.ts</code>。
+                </td>
+              </tr>
+              <tr>
+                <td>权衡意识</td>
+                <td>
+                  本次不是简单“把能并发的都并发”。核心权衡是：供应商限流优先于局部极致并发，所以采用全局池；
+                  上下文完整性优先于失败粒度，所以四维 Judge 保留 session 级；
+                  API 兼容性优先于重做前端，所以保留 <code>dimensions</code> 并新增 breakdown；
+                  用户可用结果优先于落库强一致，所以 projection / persistence 失败只降级不阻断。
+                </td>
+              </tr>
+              <tr>
+                <td>可落地性</td>
+                <td>
+                  已落地为 PR；通过 env flag 控制并发、重试、熔断，避免大爆炸式重构。
+                </td>
+              </tr>
+              <tr>
+                <td>风险敞口</td>
+                <td>
+                  保留 <code>dimensions</code> 原契约；新增 breakdown 和 aggregation metadata；
+                  segment 级四维 Judge、双轨冲突、持久化熔断标为 Post-MVP。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="validation">
+          <h2>十、验证与 PR</h2>
+          <div class="grid-2">
+            <div class="card strong">
+              <h4>验证结果</h4>
+              <ul>
+                <li><code>./node_modules/.bin/tsc --noEmit</code> 通过。</li>
+                <li><code>npm run lint</code> 通过，仅保留既有 hook dependency warning。</li>
+                <li>pipeline smoke 通过：8 rows、2 topic segments、1 goal、1 recovery、4 dimensions、1 breakdown。</li>
+              </ul>
+            </div>
+            <div class="card strong">
+              <h4>PR 与提交</h4>
+              <ul>
+                <li>PR：<code>https://github.com/Rogerrrr18/Zeval_2.0/pull/1</code></li>
+                <li>最新提交：<code>583b7c8 Parallelize topic and subjective judge stages</code></li>
+                <li>当前 PR 已更新描述，包含实现内容、关键文件、验证和 Post-MVP 边界。</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <div class="footer">
+          文档位置：<span class="mono">Zeval 重构方案/高可读文档/主观评测链路优化交付说明.html</span><br />
+          关联材料：<span class="mono">协作任务-上传至主观评测链路优化.html</span>、
+          <span class="mono">zerore-eval-system-main/docs/subjective-pipeline-optimization.md</span>。
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

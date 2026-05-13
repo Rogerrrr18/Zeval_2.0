@@ -3,6 +3,7 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import type {
   EnrichedChatlogRow,
@@ -16,6 +17,7 @@ const APOLOGY_PATTERNS = [/(抱歉|不好意思|对不起|让你困扰了)/, /(s
 const REPHRASE_PATTERNS = [/(换个说法|我换个方式|重新解释|重新说明)/, /(let me rephrase|let me explain differently)/i];
 const CLARIFICATION_PATTERNS = [/(我先确认一下|我理解的是|你是想说)/, /(let me confirm|if i understand correctly)/i];
 const CONFUSION_PATTERNS = [/(什么意思|不懂|你是说|再说一遍|没明白|怎么理解)/];
+const DEFAULT_RECOVERY_TRACE_CONCURRENCY = 4;
 
 type RecoverySummaryPayload = {
   repairStrategy?: string;
@@ -52,31 +54,43 @@ export async function buildRecoveryTraces(
 ): Promise<RecoveryTraceResult[]> {
   const grouped = groupRowsBySession(rows);
   const goalCompletionMap = new Map(goalCompletions.map((item) => [item.sessionId, item]));
-  const results: RecoveryTraceResult[] = [];
-
-  for (const [sessionId, sessionRows] of grouped.entries()) {
-    const trace = buildRecoveryTraceByRule(sessionId, sessionRows, goalCompletionMap.get(sessionId));
-    if (trace.status !== "completed" || !useLlm) {
-      results.push(trace);
-      continue;
-    }
-
-    try {
-      results.push(await enhanceRecoveryTraceWithLlm(trace, sessionRows, runId));
-    } catch (error) {
-      if (options.judgeRequired) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Recovery trace LLM Judge 失败，session=${sessionId}：${message}`);
+  return mapWithConcurrency(
+    [...grouped.entries()],
+    resolveRecoveryTraceConcurrency(),
+    async ([sessionId, sessionRows]) => {
+      const trace = buildRecoveryTraceByRule(sessionId, sessionRows, goalCompletionMap.get(sessionId));
+      if (trace.status !== "completed" || !useLlm) {
+        return trace;
       }
-      console.error("Recovery trace LLM summary failed:", sessionId, error);
-      results.push({
-        ...trace,
-        triggeredRules: [...trace.triggeredRules, "repair-strategy-llm-failed"],
-      });
-    }
-  }
 
-  return results;
+      try {
+        return await enhanceRecoveryTraceWithLlm(trace, sessionRows, runId);
+      } catch (error) {
+        if (options.judgeRequired) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Recovery trace LLM Judge 失败，session=${sessionId}：${message}`);
+        }
+        console.error("Recovery trace LLM summary failed:", sessionId, error);
+        return {
+          ...trace,
+          triggeredRules: [...trace.triggeredRules, "repair-strategy-llm-failed"],
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Resolve bounded session-level recovery trace judge concurrency.
+ * @returns Positive concurrency limit.
+ */
+function resolveRecoveryTraceConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_RECOVERY_CONCURRENCY ??
+      process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ??
+      process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_RECOVERY_TRACE_CONCURRENCY,
+  );
 }
 
 /**

@@ -252,6 +252,21 @@ export type SubjectiveMetrics = {
   }>;
   emotionTurningPoints: EmotionTurningPoint[];
   dimensions: SubjectiveDimensionResult[];
+  aggregation: {
+    method: "session_row_weighted_average";
+    weightBasis: "session_row_count";
+    evidenceMergeLimit: number;
+    reasonStrategy: "first_available";
+    confidenceMethod: "weighted_average";
+  };
+  dimensionBreakdowns: Array<{
+    sessionId: string;
+    weight: number;
+    source: FieldSource;
+    succeeded: boolean;
+    topicSegmentIds: string[];
+    dimensions: SubjectiveDimensionResult[];
+  }>;
   signals: ImplicitSignal[];
   goalCompletions: GoalCompletionResult[];
   recoveryTraces: RecoveryTraceResult[];
@@ -366,6 +381,9 @@ export type EvaluateMeta = {
   hasTimestamp: boolean;
   generatedAt: string;
   warnings: string[];
+  runState: EvaluateRunState;
+  stageStatuses: EvaluateStageRunStatus[];
+  llmJudge?: LlmJudgeRunSummary;
   savedEvaluatePath?: string;
   scenarioContext?: ScenarioEvaluateContext;
   piiRedaction?: {
@@ -377,6 +395,48 @@ export type EvaluateMeta = {
   organizationId?: string;
   projectId?: string;
   workspaceId?: string;
+};
+
+export type EvaluateRunState = "ready" | "degraded" | "failed";
+
+export type EvaluateStageRunStatus = {
+  stage: string;
+  status: "ready" | "degraded" | "failed";
+  durationMs: number;
+  degradedReason?: string;
+};
+
+/**
+ * Runtime observability for LLM judge calls made during one evaluation run.
+ * Contains timing and status metadata only, never prompt or transcript content.
+ */
+export type LlmJudgeRunSummary = {
+  enabled: boolean;
+  totalRequests: number;
+  succeededRequests: number;
+  failedRequests: number;
+  stages: Array<{
+    stage: string;
+    totalRequests: number;
+    succeededRequests: number;
+    failedRequests: number;
+    avgQueuedMs: number;
+    avgDurationMs: number;
+    maxAttempts: number;
+  }>;
+  recentRequests: Array<{
+    stage: string;
+    status: "success" | "failed";
+    queuedMs: number;
+    durationMs: number;
+    attempts: number;
+    model: string;
+    promptVersion: string | null;
+    sessionId?: string;
+    segmentId?: string;
+    errorClass?: string;
+    degradedReason?: string;
+  }>;
 };
 
 /**

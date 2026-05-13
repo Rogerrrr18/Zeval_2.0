@@ -3,10 +3,12 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import type { FieldSource, NormalizedChatlogRow, TopicSegment } from "@/types/pipeline";
 
 const LONG_GAP_REVIEW_SEC = 180;
+const DEFAULT_TOPIC_SEGMENT_CONCURRENCY = 4;
 const EXPLICIT_CONTINUATION_PATTERN = /(继续|接着|上次|还记得|再来一次|今晚继续|刚才|那个故事)/;
 const TOPIC_SWITCH_PATTERN = /(这个|上面|刚才|还有|另外|再问|换个|ok\s*那|OK\s*那)/;
 const NEGATIVE_TOPIC_BREAK_PATTERN = /(错了|不对|不是|不行|重来|换一个|没回答|没解决|答非所问)/;
@@ -50,13 +52,27 @@ export async function buildTopicSegments(
     grouped.get(row.sessionId)?.push(row);
   });
 
-  const segments: TopicSegment[] = [];
-  for (const [sessionId, sessionRows] of grouped.entries()) {
-    const sessionSegments = await buildSessionTopicSegments(sessionId, sessionRows, useLlm, runId);
-    segments.push(...sessionSegments);
-  }
+  const sessionSegments = await mapWithConcurrency(
+    [...grouped.entries()],
+    resolveTopicSegmentConcurrency(),
+    ([sessionId, sessionRows]) => buildSessionTopicSegments(sessionId, sessionRows, useLlm, runId),
+  );
 
-  return segments;
+  return sessionSegments.flat();
+}
+
+/**
+ * Resolve bounded cross-session topic segmentation concurrency.
+ * Per-session segmentation remains ordered because each decision can depend on
+ * the active segment; different sessions can run independently.
+ *
+ * @returns Positive concurrency limit.
+ */
+function resolveTopicSegmentConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_TOPIC_CONCURRENCY ?? process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_TOPIC_SEGMENT_CONCURRENCY,
+  );
 }
 
 /**

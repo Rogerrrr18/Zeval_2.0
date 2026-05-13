@@ -3,6 +3,7 @@
  */
 
 import { parseJsonObjectFromLlmOutput, requestSiliconFlowChatCompletion } from "@/lib/siliconflow";
+import { mapWithConcurrency, resolvePositiveInteger } from "@/lib/concurrency";
 import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import { buildGoalCompletions } from "@/pipeline/goalCompletion";
 import { buildRecoveryTraces } from "@/pipeline/recoveryTrace";
@@ -65,49 +66,68 @@ export async function buildSubjectiveMetrics(
     throw new Error("LLM Judge 是当前评估的强依赖，但本次请求关闭了 useLlm。");
   }
 
-  const goalCompletions = await buildGoalCompletions(rows, useLlm, runId, { judgeRequired });
-  const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired });
+  const grouped = groupRowsBySession(rows);
+  const fallbackBreakdowns = buildDimensionBreakdowns(grouped, signals, false);
 
   if (!useLlm) {
+    const goalCompletions = await buildGoalCompletions(rows, useLlm, runId, { judgeRequired });
+    const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired });
     return {
       status: "degraded",
       emotionCurve,
       emotionTurningPoints,
       dimensions: fallbackDimensions,
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: fallbackBreakdowns,
       signals,
       goalCompletions,
       recoveryTraces,
     };
   }
 
-  try {
-    const grouped = groupRowsBySession(rows);
-    const sessionReviews = await mapWithConcurrency(
-      [...grouped.entries()],
-      resolveSessionJudgeConcurrency(),
-      async ([sessionId, sessionRows]) => {
-        try {
-          return {
-            sessionId,
-            dimensions: await judgeSessionDimensionsWithLlm(sessionRows, signals, runId, { requireComplete: judgeRequired }),
-            weight: sessionRows.length,
-            succeeded: true,
-          };
-        } catch (error) {
-          if (judgeRequired) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`LLM Judge 失败，session=${sessionId}：${message}`);
-          }
-          console.error("Session subjective judge failed:", sessionId, error);
-          return {
-            sessionId,
-            dimensions: buildRuleBasedDimensions(sessionRows, signals),
-            weight: sessionRows.length,
-            succeeded: false,
-          };
+  const goalAndRecoveryPromise = buildGoalCompletions(rows, useLlm, runId, { judgeRequired }).then((goalCompletions) =>
+    buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired }).then((recoveryTraces) => ({
+      goalCompletions,
+      recoveryTraces,
+    })),
+  );
+
+  const sessionReviewsPromise = mapWithConcurrency(
+    [...grouped.entries()],
+    resolveSessionJudgeConcurrency(),
+    async ([sessionId, sessionRows]) => {
+      try {
+        return {
+          sessionId,
+          dimensions: await judgeSessionDimensionsWithLlm(sessionRows, signals, runId, { requireComplete: judgeRequired }),
+          weight: sessionRows.length,
+          topicSegmentIds: getTopicSegmentIds(sessionRows),
+          succeeded: true,
+          source: "llm" as const,
+        };
+      } catch (error) {
+        if (judgeRequired) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`LLM Judge 失败，session=${sessionId}：${message}`);
         }
-      },
-    );
+        console.error("Session subjective judge failed:", sessionId, error);
+        return {
+          sessionId,
+          dimensions: buildRuleBasedDimensions(sessionRows, signals),
+          weight: sessionRows.length,
+          topicSegmentIds: getTopicSegmentIds(sessionRows),
+          succeeded: false,
+          source: "rule" as const,
+        };
+      }
+    },
+  );
+
+  try {
+    const [{ goalCompletions, recoveryTraces }, sessionReviews] = await Promise.all([
+      goalAndRecoveryPromise,
+      sessionReviewsPromise,
+    ]);
 
     return {
       status: sessionReviews.every((review) => review.succeeded) ? "ready" : "degraded",
@@ -117,6 +137,15 @@ export async function buildSubjectiveMetrics(
         sessionReviews.map((review) => review.dimensions),
         sessionReviews.map((review) => review.weight),
       ),
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: sessionReviews.map((review) => ({
+        sessionId: review.sessionId,
+        weight: review.weight,
+        source: review.source,
+        succeeded: review.succeeded,
+        topicSegmentIds: review.topicSegmentIds,
+        dimensions: review.dimensions,
+      })),
       signals,
       goalCompletions,
       recoveryTraces,
@@ -126,16 +155,65 @@ export async function buildSubjectiveMetrics(
       throw error;
     }
     console.error("SiliconFlow subjective judge failed:", error);
+    const goalCompletions = await buildGoalCompletions(rows, false, runId, { judgeRequired: false });
+    const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, false, runId, { judgeRequired: false });
     return {
       status: "degraded",
       emotionCurve,
       emotionTurningPoints,
       dimensions: fallbackDimensions,
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: fallbackBreakdowns,
       signals,
       goalCompletions,
       recoveryTraces,
     };
   }
+}
+
+/**
+ * Build session-level subjective dimension breakdowns without changing the global summary contract.
+ * @param grouped Session rows.
+ * @param signals Implicit signals.
+ * @param succeeded Whether the source judge succeeded.
+ * @returns Per-session dimension breakdowns.
+ */
+function buildDimensionBreakdowns(
+  grouped: Map<string, EnrichedChatlogRow[]>,
+  signals: ImplicitSignal[],
+  succeeded: boolean,
+): SubjectiveMetrics["dimensionBreakdowns"] {
+  return [...grouped.entries()].map(([sessionId, sessionRows]) => ({
+    sessionId,
+    weight: sessionRows.length,
+    source: "rule",
+    succeeded,
+    topicSegmentIds: getTopicSegmentIds(sessionRows),
+    dimensions: buildRuleBasedDimensions(sessionRows, signals),
+  }));
+}
+
+/**
+ * Describe the global dimension aggregation method for downstream explainability.
+ * @returns Stable aggregation metadata.
+ */
+function buildAggregationMetadata(): SubjectiveMetrics["aggregation"] {
+  return {
+    method: "session_row_weighted_average",
+    weightBasis: "session_row_count",
+    evidenceMergeLimit: 2,
+    reasonStrategy: "first_available",
+    confidenceMethod: "weighted_average",
+  };
+}
+
+/**
+ * Extract stable topic segment ids from a session.
+ * @param rows Session rows.
+ * @returns Unique topic segment ids.
+ */
+function getTopicSegmentIds(rows: EnrichedChatlogRow[]): string[] {
+  return [...new Set(rows.map((row) => row.topicSegmentId))];
 }
 
 /**
@@ -232,37 +310,10 @@ function isCompleteDimensionPayload(value: LlmJudgeDimensionPayload): boolean {
  * @returns Positive concurrency limit for Judge calls.
  */
 function resolveSessionJudgeConcurrency(): number {
-  const parsed = Number.parseInt(process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_JUDGE_CONCURRENCY;
-}
-
-/**
- * Map items with a bounded number of concurrent async workers.
- * @param items Input items.
- * @param concurrency Maximum concurrent operations.
- * @param mapper Async mapper.
- * @returns Results in the same order as the input.
- */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    for (;;) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) {
-        return;
-      }
-      results[index] = await mapper(items[index], index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_SESSION_CONCURRENCY ?? process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY,
+    DEFAULT_SESSION_JUDGE_CONCURRENCY,
+  );
 }
 
 /**

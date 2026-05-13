@@ -93,6 +93,7 @@ export async function POST(request: Request) {
       response.meta.warnings.push(
         `PII 脱敏已处理 ${redaction.report.redactedFields} 处：${redaction.report.categories.join(", ")}。`,
       );
+      markEvaluateResponseDegraded(response);
     }
     await persistCompletedEvaluateResult(response);
     try {
@@ -112,6 +113,7 @@ export async function POST(request: Request) {
       const projectionMessage =
         projectionError instanceof Error ? projectionError.message : "evaluation projection 未知错误";
       response.meta.warnings.push(`结构化质量信号写入失败：${projectionMessage}`);
+      markEvaluateResponseDegraded(response);
       console.warn(`[EVALUATE] runId=${runId} PROJECTION_FAILED ${projectionMessage}`);
     }
 
@@ -175,6 +177,7 @@ function streamEvaluateRun(input: {
           response.meta.warnings.push(
             `PII 脱敏已处理 ${input.redactionReport.redactedFields} 处：${input.redactionReport.categories.join(", ")}。`,
           );
+          markEvaluateResponseDegraded(response);
         }
         await persistCompletedEvaluateResult(response);
         try {
@@ -194,6 +197,7 @@ function streamEvaluateRun(input: {
           const projectionMessage =
             projectionError instanceof Error ? projectionError.message : "evaluation projection 未知错误";
           response.meta.warnings.push(`结构化质量信号写入失败：${projectionMessage}`);
+          markEvaluateResponseDegraded(response);
           console.warn(`[EVALUATE] runId=${input.runId} STREAM_PROJECTION_FAILED ${projectionMessage}`);
         }
         send({ type: "result", result: response });
@@ -228,6 +232,17 @@ async function persistCompletedEvaluateResult(response: Awaited<ReturnType<typeo
   } catch (error) {
     const message = error instanceof Error ? error.message : "评估结果保存失败";
     response.meta.warnings.push(`评估结果保存失败：${message}`);
+    markEvaluateResponseDegraded(response);
     console.warn(`[EVALUATE] runId=${response.runId} SAVE_FAILED ${message}`);
+  }
+}
+
+/**
+ * Mark an otherwise completed response as degraded after non-blocking warnings.
+ * @param response Completed evaluate response.
+ */
+function markEvaluateResponseDegraded(response: Awaited<ReturnType<typeof runEvaluatePipeline>>): void {
+  if (response.meta.runState !== "failed") {
+    response.meta.runState = "degraded";
   }
 }

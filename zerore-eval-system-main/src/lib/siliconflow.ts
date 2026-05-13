@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { resolvePositiveInteger } from "@/lib/concurrency";
 import {
   ZEVAL_JUDGE_MAX_TOKENS,
   ZEVAL_JUDGE_TEMPERATURE,
@@ -31,12 +32,36 @@ type SiliconFlowChatResponse = {
 
 const DEFAULT_LLM_RETRY_ATTEMPTS = 3;
 const DEFAULT_LLM_TIMEOUT_MS = 45000;
+const DEFAULT_LLM_GLOBAL_CONCURRENCY = 4;
+const DEFAULT_LLM_CIRCUIT_BREAKER_FAILURES = 5;
+const DEFAULT_LLM_CIRCUIT_BREAKER_COOLDOWN_MS = 60000;
 
 type SiliconFlowLogContext = {
   stage: string;
   runId?: string;
   sessionId?: string;
   segmentId?: string;
+};
+
+type LlmQueueInfo = {
+  enqueuedAt: number;
+  queueDepthAtEnqueue: number;
+  queuedMs: number;
+};
+
+export type LlmRequestTelemetry = {
+  stage: string;
+  runId: string;
+  status: "success" | "failed";
+  queuedMs: number;
+  durationMs: number;
+  attempts: number;
+  model: string;
+  promptVersion: string | null;
+  sessionId?: string;
+  segmentId?: string;
+  errorClass?: string;
+  degradedReason?: string;
 };
 
 /**
@@ -48,6 +73,40 @@ type SiliconFlowLogContext = {
 export async function requestSiliconFlowChatCompletion(
   messages: SiliconFlowMessage[],
   context: SiliconFlowLogContext,
+): Promise<string> {
+  const circuitState = getOpenCircuitState(context.stage);
+  if (circuitState) {
+    const promptVersion = getPromptVersionForRequestStage(context.stage);
+    const judgeProfile = getZevalJudgeProfileSnapshot();
+    const degradedReason = `LLM circuit breaker open for stage=${context.stage} until=${new Date(circuitState.openUntil).toISOString()}`;
+    console.warn(`${buildLlmLogPrefix(context)} CIRCUIT_OPEN degradedReason=${degradedReason}`);
+    recordLlmTelemetry(context, {
+      status: "failed",
+      queuedMs: 0,
+      durationMs: 0,
+      attempts: 0,
+      model: judgeProfile.model,
+      promptVersion,
+      errorClass: "circuit_open",
+      degradedReason,
+    });
+    throw new Error(degradedReason);
+  }
+  return runWithLlmGlobalConcurrency((queueInfo) =>
+    requestSiliconFlowChatCompletionUnbounded(messages, context, queueInfo),
+  );
+}
+
+/**
+ * Execute a chat completion request after the caller has acquired a global LLM slot.
+ * @param messages OpenAI-compatible chat messages.
+ * @param context Logging context for this request stage.
+ * @returns Raw model content string.
+ */
+async function requestSiliconFlowChatCompletionUnbounded(
+  messages: SiliconFlowMessage[],
+  context: SiliconFlowLogContext,
+  queueInfo: LlmQueueInfo,
 ): Promise<string> {
   const config = getSiliconFlowRuntimeConfig();
   const apiKey = config.apiKey;
@@ -68,7 +127,7 @@ export async function requestSiliconFlowChatCompletion(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_LLM_TIMEOUT_MS);
     console.info(
-      `${logPrefix} START attempt=${attempt}/${maxAttempts} model=${model} judgeProfile=${judgeProfile.profileVersion} promptVersion=${promptVersion ?? "unversioned"} messages=${messages.length}`,
+      `${logPrefix} START attempt=${attempt}/${maxAttempts} model=${model} judgeProfile=${judgeProfile.profileVersion} promptVersion=${promptVersion ?? "unversioned"} messages=${messages.length} queuedMs=${queueInfo.queuedMs} queueDepthAtEnqueue=${queueInfo.queueDepthAtEnqueue}`,
     );
     try {
       const requestBody: Record<string, unknown> = {
@@ -117,14 +176,38 @@ export async function requestSiliconFlowChatCompletion(
         );
       }
 
-      console.info(`${logPrefix} SUCCESS attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt}`);
+      const durationMs = Date.now() - startedAt;
+      console.info(
+        `${logPrefix} SUCCESS attempt=${attempt}/${maxAttempts} queuedMs=${queueInfo.queuedMs} durationMs=${durationMs}`,
+      );
+      recordLlmTelemetry(context, {
+        status: "success",
+        queuedMs: queueInfo.queuedMs,
+        durationMs,
+        attempts: attempt,
+        model,
+        promptVersion,
+      });
+      resetCircuitState(context.stage);
       return content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown";
+      const durationMs = Date.now() - startedAt;
       console.error(
-        `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt} message=${message}`,
+        `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} queuedMs=${queueInfo.queuedMs} durationMs=${durationMs} errorClass=${classifyLlmError(error)} retryable=${isRetryableLlmError(error)} message=${message}`,
       );
       if (attempt >= maxAttempts || !isRetryableLlmError(error)) {
+        updateCircuitState(context.stage, classifyLlmError(error));
+        recordLlmTelemetry(context, {
+          status: "failed",
+          queuedMs: queueInfo.queuedMs,
+          durationMs,
+          attempts: attempt,
+          model,
+          promptVersion,
+          errorClass: classifyLlmError(error),
+          degradedReason: message,
+        });
         throw error;
       }
       await sleep(buildRetryDelayMs(attempt));
@@ -134,6 +217,173 @@ export async function requestSiliconFlowChatCompletion(
   }
 
   throw new Error("LLM Judge 重试耗尽。");
+}
+
+type LlmQueueItem<T> = {
+  operation: (queueInfo: LlmQueueInfo) => Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+  enqueuedAt: number;
+  queueDepthAtEnqueue: number;
+};
+
+let activeLlmRequests = 0;
+const pendingLlmRequests: LlmQueueItem<unknown>[] = [];
+const llmTelemetryByRunId = new Map<string, LlmRequestTelemetry[]>();
+const circuitStateByStage = new Map<string, { failures: number; openUntil: number }>();
+
+/**
+ * Run one provider call inside a process-wide concurrency limit.
+ * This limit is shared by segment emotion, goal completion, recovery trace and
+ * subjective dimension judges, so a large upload cannot fan out unbounded calls.
+ *
+ * @param operation Provider request operation.
+ * @returns Operation result.
+ */
+function runWithLlmGlobalConcurrency<T>(operation: (queueInfo: LlmQueueInfo) => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const queueDepthAtEnqueue = activeLlmRequests + pendingLlmRequests.length;
+    pendingLlmRequests.push({
+      operation,
+      resolve,
+      reject,
+      enqueuedAt: Date.now(),
+      queueDepthAtEnqueue,
+    } as LlmQueueItem<unknown>);
+    drainLlmQueue();
+  });
+}
+
+/**
+ * Start queued LLM requests while slots are available.
+ */
+function drainLlmQueue(): void {
+  const concurrency = resolveLlmGlobalConcurrency();
+  while (activeLlmRequests < concurrency && pendingLlmRequests.length > 0) {
+    const item = pendingLlmRequests.shift();
+    if (!item) {
+      return;
+    }
+    activeLlmRequests += 1;
+    const queuedMs = Math.max(0, Date.now() - item.enqueuedAt);
+    item
+      .operation({
+        enqueuedAt: item.enqueuedAt,
+        queueDepthAtEnqueue: item.queueDepthAtEnqueue,
+        queuedMs,
+      })
+      .then(item.resolve)
+      .catch(item.reject)
+      .finally(() => {
+        activeLlmRequests -= 1;
+        drainLlmQueue();
+      });
+  }
+}
+
+/**
+ * Consume recorded LLM telemetry for one run id.
+ * @param runId Evaluation run id.
+ * @returns Request telemetry captured since the previous consume call.
+ */
+export function consumeLlmRequestTelemetry(runId: string): LlmRequestTelemetry[] {
+  const records = llmTelemetryByRunId.get(runId) ?? [];
+  llmTelemetryByRunId.delete(runId);
+  return records;
+}
+
+/**
+ * Record one completed LLM request for run-level observability.
+ */
+function recordLlmTelemetry(
+  context: SiliconFlowLogContext,
+  record: Omit<LlmRequestTelemetry, "stage" | "runId" | "sessionId" | "segmentId">,
+): void {
+  if (!context.runId) {
+    return;
+  }
+  const records = llmTelemetryByRunId.get(context.runId) ?? [];
+  records.push({
+    ...record,
+    stage: context.stage,
+    runId: context.runId,
+    sessionId: context.sessionId,
+    segmentId: context.segmentId,
+  });
+  llmTelemetryByRunId.set(context.runId, records.slice(-200));
+}
+
+/**
+ * Resolve the process-wide LLM provider concurrency.
+ * @returns Positive concurrency limit.
+ */
+function resolveLlmGlobalConcurrency(): number {
+  return resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY ?? process.env.ZEVAL_LLM_GLOBAL_CONCURRENCY,
+    DEFAULT_LLM_GLOBAL_CONCURRENCY,
+  );
+}
+
+/**
+ * Return an open circuit for a stage, or clear an expired one.
+ * @param stage LLM stage.
+ * @returns Open circuit state, if any.
+ */
+function getOpenCircuitState(stage: string): { failures: number; openUntil: number } | null {
+  const state = circuitStateByStage.get(stage);
+  if (!state) {
+    return null;
+  }
+  if (state.openUntil <= 0) {
+    return null;
+  }
+  if (state.openUntil <= Date.now()) {
+    circuitStateByStage.delete(stage);
+    return null;
+  }
+  return state;
+}
+
+/**
+ * Reset the circuit breaker after a successful provider response.
+ * @param stage LLM stage.
+ */
+function resetCircuitState(stage: string): void {
+  circuitStateByStage.delete(stage);
+}
+
+/**
+ * Update stage-local circuit breaker state after a terminal request failure.
+ * @param stage LLM stage.
+ * @param errorClass Classified error.
+ */
+function updateCircuitState(stage: string, errorClass: string): void {
+  if (!isCircuitBreakerError(errorClass)) {
+    return;
+  }
+  const threshold = resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_CIRCUIT_BREAKER_FAILURES,
+    DEFAULT_LLM_CIRCUIT_BREAKER_FAILURES,
+  );
+  const cooldownMs = resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS,
+    DEFAULT_LLM_CIRCUIT_BREAKER_COOLDOWN_MS,
+  );
+  const current = circuitStateByStage.get(stage);
+  const failures = (current?.failures ?? 0) + 1;
+  circuitStateByStage.set(stage, {
+    failures,
+    openUntil: failures >= threshold ? Date.now() + cooldownMs : 0,
+  });
+}
+
+/**
+ * Decide whether an error should count toward circuit breaking.
+ * @param errorClass Classified error.
+ * @returns Whether the error is provider/transient capacity related.
+ */
+function isCircuitBreakerError(errorClass: string): boolean {
+  return errorClass === "rate_limited" || errorClass === "provider_5xx" || errorClass === "timeout" || errorClass === "network";
 }
 
 /**
@@ -321,17 +571,6 @@ function resolveOptionalBoolean(value: string | undefined): boolean | undefined 
 }
 
 /**
- * Resolve a positive integer environment override.
- * @param value Raw environment value.
- * @param fallback Fallback when the value is absent or invalid.
- * @returns Positive integer.
- */
-function resolvePositiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-/**
  * Decide whether one LLM error is transient enough to retry.
  * @param error Error thrown by fetch or provider validation.
  * @returns Whether the request should be retried.
@@ -343,6 +582,37 @@ function isRetryableLlmError(error: unknown): boolean {
     /SiliconFlow 请求失败: (408|409|425|429|5\d\d)/.test(message) ||
     /非 JSON 响应: (408|409|425|429|5\d\d)/.test(message)
   );
+}
+
+/**
+ * Classify common LLM provider failures for logs and run metadata.
+ * @param error Request error.
+ * @returns Stable error class.
+ */
+function classifyLlmError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout|timed out/i.test(message)) {
+    return "timeout";
+  }
+  if (/SiliconFlow 请求失败: 429/.test(message)) {
+    return "rate_limited";
+  }
+  if (/SiliconFlow 请求失败: 4\d\d/.test(message)) {
+    return "provider_4xx";
+  }
+  if (/SiliconFlow 请求失败: 5\d\d/.test(message)) {
+    return "provider_5xx";
+  }
+  if (/JSON|未找到 JSON|未返回有效内容|非 JSON/i.test(message)) {
+    return "invalid_response";
+  }
+  if (/fetch failed|network/i.test(message)) {
+    return "network";
+  }
+  if (/circuit breaker open/i.test(message)) {
+    return "circuit_open";
+  }
+  return "unknown";
 }
 
 /**

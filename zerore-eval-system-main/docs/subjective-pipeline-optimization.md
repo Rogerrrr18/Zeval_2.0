@@ -59,10 +59,18 @@ ZEVAL_JUDGE_RETRY_ATTEMPTS=3
 
 ## 降级语义
 
-- `useLlm=false`：主观维度、goal、recovery 走规则路径，`subjectiveMetrics.status = degraded`。
-- `judgeRequired=true` 且 `useLlm=false`：直接失败，避免用户误以为完成了强依赖 Judge。
-- 单个 session 的 LLM 失败且 `judgeRequired=false`：该 session 回退规则结果，并在对应 `triggeredRules` 中记录 fallback 标记。
-- 单个 session 的 LLM 失败且 `judgeRequired=true`：抛错，API 返回失败。
+| useLlm | judgeRequired | 入口行为 | LLM 调用失败时 | 用户可见结果 |
+| --- | --- | --- | --- | --- |
+| `true` | `true`（默认） | 正常进入评估 | 任一强依赖 Judge 失败会抛错 | 同步 JSON 返回 500；SSE 返回 `type=error`；async job 标记失败 |
+| `true` | `false` | 正常进入评估 | session 级回退规则结果，记录 fallback rule / `meta.llmJudge.failedRequests` | 返回 200 / SSE result / job success，`subjectiveMetrics.status=degraded` |
+| `false` | `false` | 正常进入规则模式 | 不调用 LLM | 返回 200 / SSE result / job success，`subjectiveMetrics.status=degraded`，`meta.llmJudge.enabled=false` |
+| `false` | `true` | route 层拒绝；pipeline 层也有保护 | 不进入评估 | 同步 / SSE / async 入队前返回 400，错误文案为“当前产品链路要求 LLM Judge 必须开启...” |
+
+持久化与投影失败不属于主评估链路失败：
+
+- 同步 JSON：`persistEvaluateResult` 或 evaluation projection 写入失败会追加到 `meta.warnings`，不阻断 200 响应。
+- `stream=1` SSE：同样追加到 `result.meta.warnings`，继续发送 `type=result`。
+- `asyncMode`：queued job 现在同样把保存 / projection 失败写入 `warnings`，job 仍可成功返回评估摘要。
 
 ## 运行时观测
 

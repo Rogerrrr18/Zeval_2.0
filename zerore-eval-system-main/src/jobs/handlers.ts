@@ -62,23 +62,39 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   response.meta.workspaceId = job.workspaceId;
   response.meta.piiRedaction = redaction.report;
 
-  const projection = buildEvaluationProjection(response, {
-    organizationId: job.organizationId,
-    projectId: job.projectId,
-    workspaceId: job.workspaceId,
-    runId,
-    useLlm,
-  });
-  const database = await createZeroreDatabase();
-  await persistEvaluationProjection(database, projection);
-  const savedEvaluatePath = await persistEvaluateResult(response);
+  let projectionRecords: number | null = null;
+  try {
+    const projection = buildEvaluationProjection(response, {
+      organizationId: job.organizationId,
+      projectId: job.projectId,
+      workspaceId: job.workspaceId,
+      runId,
+      useLlm,
+    });
+    const database = await createZeroreDatabase();
+    await persistEvaluationProjection(database, projection);
+    projectionRecords = projection.dbRecords.length;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "evaluation projection 未知错误";
+    response.meta.warnings.push(`结构化质量信号写入失败：${message}`);
+    console.warn(`[JOBS] evaluate runId=${runId} PROJECTION_FAILED ${message}`);
+  }
+
+  let savedEvaluatePath: string | null = null;
+  try {
+    savedEvaluatePath = await persistEvaluateResult(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "评估结果保存失败";
+    response.meta.warnings.push(`评估结果保存失败：${message}`);
+    console.warn(`[JOBS] evaluate runId=${runId} SAVE_FAILED ${message}`);
+  }
 
   return {
     runId,
     warnings: response.meta.warnings,
     artifactPath: response.artifactPath ?? null,
     savedEvaluatePath,
-    projectionRecords: projection.dbRecords.length,
+    projectionRecords,
     summaryCards: response.summaryCards,
     badCaseCount: response.badCaseAssets.length,
   };

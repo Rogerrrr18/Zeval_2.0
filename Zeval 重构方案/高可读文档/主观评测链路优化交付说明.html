@@ -266,6 +266,7 @@
           <li><a href="#summary">交付结论</a></li>
           <li><a href="#scope">范围与边界</a></li>
           <li><a href="#pipeline">链路现状说明</a></li>
+          <li><a href="#source-review">第三项源码复核</a></li>
           <li><a href="#changes">做了什么</a></li>
           <li><a href="#answers-41">4.1 并发与队列</a></li>
           <li><a href="#answers-42">4.2 汇总与语义</a></li>
@@ -412,8 +413,269 @@
           </table>
         </section>
 
+        <section id="source-review">
+          <h2>三、对协作文档第三项的源码级复核回答</h2>
+          <p class="dim">
+            协作文档第三项要求复核“当前实现速览”。下面按 3.1、3.2、3.3 三块，用源码粒度回答现在到底怎么做、这次改了什么、设计取舍是什么。
+          </p>
+
+          <h3>3.1 Enrich：切分与分段情绪是怎么实现的？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            已完整实现 <code>normalize -> topic segment -> segment emotion -> enrichedRows</code>。
+            topic 切分现在是“规则优先 + 长间隔 LLM continuity 辅助 + 单 session 内顺序 + 跨 session 有界并发”；
+            分段情绪现在是“每个 topic segment 可 LLM 评情绪基线 + 本地权重修正 + 有界并发 + 失败规则回退”。
+          </div>
+
+          <div class="flow">
+            <code>src/pipeline/enrich.ts
+  enrichRows(rawRows, useLlm, runId)
+    -> normalizeRawRows(rawRows)
+    -> buildTopicSegments(normalizedRows, useLlm, runId)
+    -> scoreTopicSegmentEmotions(rawTopicSegments, normalizedRows, useLlm, runId)
+    -> enrichedRows 写入 topic / topicSegmentId / topicSummary / emotionScore / responseGapSec / isTopicSwitch</code>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>实现位置</th>
+                <th>当前实现</th>
+                <th>本次优化</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>normalize</td>
+                <td><code>normalizeRawRows</code></td>
+                <td>
+                  统一 session 内 turnIndex、timestampMs、activeHour 等基础字段，为后续切分和时序指标提供稳定输入。
+                </td>
+                <td>保持规则实现，不引入 LLM，保证可复现。</td>
+              </tr>
+              <tr>
+                <td>topic 切分</td>
+                <td><code>buildTopicSegments</code> / <code>buildSessionTopicSegments</code></td>
+                <td>
+                  先按 <code>sessionId</code> 分组；单 session 内维护 <code>activeSegment</code>，逐 row 判断是否切新 topic。
+                  规则会识别“另外、换个、再问、错了、不对、没回答”等切换或断裂表达；“继续、接着、上次、刚才”等显式延续会阻止切分。
+                </td>
+                <td>
+                  新增 <code>ZEVAL_JUDGE_TOPIC_CONCURRENCY</code>：不同 session 可并发切分；单 session 内仍顺序，避免破坏 active segment 的上下文依赖。
+                </td>
+              </tr>
+              <tr>
+                <td>长间隔 continuity LLM</td>
+                <td><code>reviewLongGapTopicContinuation</code></td>
+                <td>
+                  仅当 <code>gapSec >= 180</code>、<code>useLlm=true</code>、且不是显式 continuation 时调用。
+                  LLM 只回答“当前 row 是否仍是 active segment 的延续”，不负责重做完整 topic 分类。
+                </td>
+                <td>
+                  LLM 请求进入 <code>ZEVAL_JUDGE_GLOBAL_CONCURRENCY</code> 全局池，避免多个阶段叠加打爆供应商。
+                </td>
+              </tr>
+              <tr>
+                <td>分段情绪补全</td>
+                <td><code>scoreTopicSegmentEmotions</code></td>
+                <td>
+                  每个 topic segment 先得到 LLM 或规则情绪基线，再叠加 valence、length、style、gap、recovery、risk penalty 等本地权重，生成最终 <code>emotionScore</code>。
+                </td>
+                <td>
+                  从无界 <code>Promise.all</code> 改为 <code>ZEVAL_JUDGE_SEGMENT_CONCURRENCY</code> 有界并发；
+                  单 segment LLM 失败时回退规则情绪基线，不拖垮整个评估。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>权衡：</strong>
+            topic 切分没有改成“全量 LLM 分类”，因为瘦日志场景下大部分 topic 边界可由规则稳定识别；
+            LLM 只用于长间隔 continuity 这种规则不稳定点。这样降低成本和漂移，同时保留必要的语义判断能力。
+          </div>
+
+          <h3>3.2 主观指标与汇总是怎么实现的？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            主观指标现在不是单一 Judge，而是由三条输出组成：
+            <code>goalCompletions</code>、<code>recoveryTraces</code>、<code>subjective dimension judge</code>。
+            本次已把多 session LLM 调用从串行或局部并发，统一改成阶段级有界并发 + 全局池；同时补了 session 级明细与聚合 metadata。
+          </div>
+
+          <div class="flow">
+            <code>src/pipeline/subjectiveMetrics.ts
+  buildSubjectiveMetrics(enrichedRows, useLlm, runId)
+    -> buildImplicitSignals(enrichedRows)                         [规则]
+    -> buildGoalCompletions(enrichedRows, useLlm, runId)          [规则优先，unclear 才 LLM]
+    -> buildRecoveryTraces(enrichedRows, goalCompletions, useLlm) [依赖 goal，completed 才 LLM]
+    -> subjective_dimension_judge                                 [session 级四维 Judge]
+    -> aggregateDimensionReviews + dimensionBreakdowns + aggregation</code>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>主观子阶段</th>
+                <th>LLM 触发条件</th>
+                <th>并发设计</th>
+                <th>失败行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>goal completion</td>
+                <td>
+                  先用规则判断 achieved / failed / partial；只有 <code>unclear</code> 才调用
+                  <code>goal_completion_judge</code>。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_GOAL_CONCURRENCY</code>；
+                  每次 LLM 请求仍进入全局池。
+                </td>
+                <td>
+                  <code>judgeRequired=false</code> 时回退规则结果并追加 fallback 标记；
+                  <code>judgeRequired=true</code> 时抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>recovery trace</td>
+                <td>
+                  先用规则找失败点和恢复点；只有 <code>status=completed</code> 时才调用
+                  <code>recovery_trace_strategy</code> 总结修复策略。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_RECOVERY_CONCURRENCY</code>；
+                  recovery 依赖 goal completion，因此仍等待 goal 结果。
+                </td>
+                <td>
+                  LLM 失败时保留规则 trace；严格模式下抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>四维 subjective Judge</td>
+                <td>
+                  <code>useLlm=true</code> 时按 session 调 <code>subjective_dimension_judge</code>。
+                  单次输入会把同一 session 下多个 topic segment 拼进 transcript。
+                </td>
+                <td>
+                  多 session 使用 <code>ZEVAL_JUDGE_SESSION_CONCURRENCY</code>；
+                  四维 Judge 与 goal completion -> recovery trace 链并行启动。
+                </td>
+                <td>
+                  单 session Judge 失败时，宽松模式回退规则四维；严格模式抛错。
+                </td>
+              </tr>
+              <tr>
+                <td>四维聚合</td>
+                <td>不调用 LLM。</td>
+                <td>本地聚合。</td>
+                <td>
+                  保留原有 <code>dimensions</code> 全局摘要；
+                  新增 <code>dimensionBreakdowns</code> 和 <code>aggregation</code> 解释权重、来源和聚合口径。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>为什么不把四维 Judge 拆到每个 segment？</strong>
+            当前产品需要的是 session 级主观评测结论；四维 Judge 判断“共情、答非所问、说教感、恢复能力”时需要跨轮上下文。
+            segment 级拆分会增加调用数、降低上下文完整性、引入更复杂的多 segment 聚合语义。
+            因此本轮保持 session 级 Judge，同时通过 <code>dimensionBreakdowns.topicSegmentIds</code> 为后续 topic 级展示留接口。
+          </div>
+
+          <h3>3.3 API 与异步现在是什么情况？</h3>
+          <div class="answer">
+            <strong>结论：</strong>
+            <code>app/api/evaluate/route.ts</code> 已支持同步 JSON、<code>stream=1</code> SSE、<code>asyncMode</code> 入队。
+            三种入口复用同一条 <code>runEvaluatePipeline</code>，差异主要是交互形态和错误返回方式。
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>入口形态</th>
+                <th>怎么运行</th>
+                <th>成功结果</th>
+                <th>失败 / 降级语义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>同步 JSON</td>
+                <td>请求内直接执行 <code>runEvaluatePipeline</code>。</td>
+                <td>返回完整 evaluate response。</td>
+                <td>
+                  主链路硬失败返回 500；projection / result persistence 失败写入
+                  <code>meta.warnings</code> 并标记 <code>runState=degraded</code>，不阻断 200。
+                </td>
+              </tr>
+              <tr>
+                <td>SSE：<code>stream=1</code></td>
+                <td>同一 pipeline，但通过 <code>onProgress</code> 推送 stage running / done / failed。</td>
+                <td>最后发送 <code>type=result</code>。</td>
+                <td>硬失败发送 <code>type=error</code>；非阻塞写入失败仍进入 result warnings。</td>
+              </tr>
+              <tr>
+                <td>异步：<code>asyncMode</code></td>
+                <td>先入本地 job，worker 再执行 evaluate job。</td>
+                <td>job success 中返回评估摘要和 warnings。</td>
+                <td>
+                  主链路硬失败标记 job failed；projection / 保存失败只追加 warnings，job 仍可成功。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <thead>
+              <tr>
+                <th><code>useLlm</code></th>
+                <th><code>judgeRequired</code></th>
+                <th>链路行为</th>
+                <th>用户可见结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>true</td>
+                <td>true</td>
+                <td>LLM Judge 是强依赖，失败即抛错。</td>
+                <td>同步 500 / SSE error / async job failed。</td>
+              </tr>
+              <tr>
+                <td>true</td>
+                <td>false</td>
+                <td>LLM 失败时 session 级规则回退。</td>
+                <td>200 或 job success；<code>subjectiveMetrics.status=degraded</code>；<code>meta.llmJudge.failedRequests &gt; 0</code>。</td>
+              </tr>
+              <tr>
+                <td>false</td>
+                <td>false</td>
+                <td>不调用 LLM，全部走规则模式。</td>
+                <td>200 或 job success；<code>meta.llmJudge.enabled=false</code>；主观状态 degraded。</td>
+              </tr>
+              <tr>
+                <td>false</td>
+                <td>true</td>
+                <td>入口拒绝，pipeline 也保护性抛错。</td>
+                <td>400，不产出评估结果。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="answer">
+            <strong>为什么这样设计：</strong>
+            API 层不把“部分降级”混同为“硬失败”。只要主评估结果可用，就保留 200 / result / job success，
+            通过 <code>meta.runState</code>、<code>stageStatuses</code>、<code>warnings</code> 告知降级；
+            只有调用方明确要求 <code>judgeRequired=true</code> 或主链路无法产出结果时，才硬失败。
+          </div>
+        </section>
+
         <section id="changes">
-          <h2>三、我们做了什么</h2>
+          <h2>四、我们做了什么</h2>
           <div class="grid-3">
             <div class="card">
               <h4>1. topic 与 emotion 补全</h4>
@@ -461,7 +723,7 @@
         </section>
 
         <section id="answers-41">
-          <h2>四、明确回答 4.1：并发与队列</h2>
+          <h2>五、明确回答 4.1：并发与队列</h2>
 
           <h3>问题 1：分段情绪 LLM 与 session 级主观 Judge 应共享全局并发池还是分阶段独立 limit？</h3>
           <div class="answer">
@@ -691,7 +953,7 @@
         </section>
 
         <section id="answers-42">
-          <h2>五、明确回答 4.2：数据汇总与语义</h2>
+          <h2>六、明确回答 4.2：数据汇总与语义</h2>
 
           <h3>问题 4：多 session、多 segment 的四维聚合是否满足业务可解释性？如何兼容 API 与前端？</h3>
           <div class="answer">
@@ -796,7 +1058,7 @@
         </section>
 
         <section id="answers-43">
-          <h2>六、明确回答 4.3：报错、降级与产品一致性</h2>
+          <h2>七、明确回答 4.3：报错、降级与产品一致性</h2>
 
           <h3>问题 6：当前降级路径对用户可见字段有什么影响？</h3>
           <table>
@@ -958,7 +1220,7 @@
         </section>
 
         <section id="deliverables">
-          <h2>七、对应第五项：协作产出清单</h2>
+          <h2>八、对应第五项：协作产出清单</h2>
           <div class="grid-2">
             <div class="card strong">
               <h4>《链路现状说明》</h4>
@@ -990,7 +1252,7 @@
         </section>
 
         <section id="rubric">
-          <h2>八、对应第六项：共识维度检查</h2>
+          <h2>九、对应第六项：共识维度检查</h2>
           <table>
             <thead>
               <tr>
@@ -1034,7 +1296,7 @@
         </section>
 
         <section id="validation">
-          <h2>九、验证与 PR</h2>
+          <h2>十、验证与 PR</h2>
           <div class="grid-2">
             <div class="card strong">
               <h4>验证结果</h4>

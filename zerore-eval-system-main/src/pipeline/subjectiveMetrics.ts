@@ -68,6 +68,8 @@ export async function buildSubjectiveMetrics(
 
   const goalCompletions = await buildGoalCompletions(rows, useLlm, runId, { judgeRequired });
   const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired });
+  const grouped = groupRowsBySession(rows);
+  const fallbackBreakdowns = buildDimensionBreakdowns(grouped, signals, false);
 
   if (!useLlm) {
     return {
@@ -75,6 +77,8 @@ export async function buildSubjectiveMetrics(
       emotionCurve,
       emotionTurningPoints,
       dimensions: fallbackDimensions,
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: fallbackBreakdowns,
       signals,
       goalCompletions,
       recoveryTraces,
@@ -82,7 +86,6 @@ export async function buildSubjectiveMetrics(
   }
 
   try {
-    const grouped = groupRowsBySession(rows);
     const sessionReviews = await mapWithConcurrency(
       [...grouped.entries()],
       resolveSessionJudgeConcurrency(),
@@ -92,7 +95,9 @@ export async function buildSubjectiveMetrics(
             sessionId,
             dimensions: await judgeSessionDimensionsWithLlm(sessionRows, signals, runId, { requireComplete: judgeRequired }),
             weight: sessionRows.length,
+            topicSegmentIds: getTopicSegmentIds(sessionRows),
             succeeded: true,
+            source: "llm" as const,
           };
         } catch (error) {
           if (judgeRequired) {
@@ -104,7 +109,9 @@ export async function buildSubjectiveMetrics(
             sessionId,
             dimensions: buildRuleBasedDimensions(sessionRows, signals),
             weight: sessionRows.length,
+            topicSegmentIds: getTopicSegmentIds(sessionRows),
             succeeded: false,
+            source: "rule" as const,
           };
         }
       },
@@ -118,6 +125,15 @@ export async function buildSubjectiveMetrics(
         sessionReviews.map((review) => review.dimensions),
         sessionReviews.map((review) => review.weight),
       ),
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: sessionReviews.map((review) => ({
+        sessionId: review.sessionId,
+        weight: review.weight,
+        source: review.source,
+        succeeded: review.succeeded,
+        topicSegmentIds: review.topicSegmentIds,
+        dimensions: review.dimensions,
+      })),
       signals,
       goalCompletions,
       recoveryTraces,
@@ -132,11 +148,58 @@ export async function buildSubjectiveMetrics(
       emotionCurve,
       emotionTurningPoints,
       dimensions: fallbackDimensions,
+      aggregation: buildAggregationMetadata(),
+      dimensionBreakdowns: fallbackBreakdowns,
       signals,
       goalCompletions,
       recoveryTraces,
     };
   }
+}
+
+/**
+ * Build session-level subjective dimension breakdowns without changing the global summary contract.
+ * @param grouped Session rows.
+ * @param signals Implicit signals.
+ * @param succeeded Whether the source judge succeeded.
+ * @returns Per-session dimension breakdowns.
+ */
+function buildDimensionBreakdowns(
+  grouped: Map<string, EnrichedChatlogRow[]>,
+  signals: ImplicitSignal[],
+  succeeded: boolean,
+): SubjectiveMetrics["dimensionBreakdowns"] {
+  return [...grouped.entries()].map(([sessionId, sessionRows]) => ({
+    sessionId,
+    weight: sessionRows.length,
+    source: "rule",
+    succeeded,
+    topicSegmentIds: getTopicSegmentIds(sessionRows),
+    dimensions: buildRuleBasedDimensions(sessionRows, signals),
+  }));
+}
+
+/**
+ * Describe the global dimension aggregation method for downstream explainability.
+ * @returns Stable aggregation metadata.
+ */
+function buildAggregationMetadata(): SubjectiveMetrics["aggregation"] {
+  return {
+    method: "session_row_weighted_average",
+    weightBasis: "session_row_count",
+    evidenceMergeLimit: 2,
+    reasonStrategy: "first_available",
+    confidenceMethod: "weighted_average",
+  };
+}
+
+/**
+ * Extract stable topic segment ids from a session.
+ * @param rows Session rows.
+ * @returns Unique topic segment ids.
+ */
+function getTopicSegmentIds(rows: EnrichedChatlogRow[]): string[] {
+  return [...new Set(rows.map((row) => row.topicSegmentId))];
 }
 
 /**

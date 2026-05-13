@@ -29,6 +29,9 @@ rawRows
 5. `src/pipeline/recoveryTrace.ts` 将 completed recovery trace 的 LLM 总结从串行改为有界并发，默认 4，可用 `ZEVAL_JUDGE_RECOVERY_CONCURRENCY` 覆盖。
 6. `src/pipeline/subjectiveMetrics.ts` 复用共享并发工具，并让 session dimension judge 的并发上限可回退到全局配置。
 7. `EvaluateResponse.meta.llmJudge` 增加运行时观测摘要，返回每个 LLM stage 的请求数、成功/失败、平均排队耗时、平均请求耗时、最大重试次数，以及最近 20 条请求的 session / segment / error metadata。
+8. `EvaluateResponse.meta.runState / stageStatuses` 增加评估级状态机，区分 ready / degraded / failed，并把 warnings、LLM 降级、projection 写入失败统一反馈到响应 metadata。
+9. `subjectiveMetrics.dimensionBreakdowns / aggregation` 增加 session 级四维 Judge 明细与聚合口径说明，保留现有 `dimensions` 全局摘要不破坏前端。
+10. `src/lib/siliconflow.ts` 增加 stage-local 轻量熔断；连续 provider / timeout / network / rate limit 失败达到阈值后，该 stage 在冷却期内直接进入降级路径，避免无意义排队和请求风暴。
 
 ## 链路现状说明
 
@@ -53,6 +56,8 @@ ZEVAL_JUDGE_SESSION_CONCURRENCY=4
 ZEVAL_JUDGE_GOAL_CONCURRENCY=4
 ZEVAL_JUDGE_RECOVERY_CONCURRENCY=4
 ZEVAL_JUDGE_RETRY_ATTEMPTS=3
+ZEVAL_JUDGE_CIRCUIT_BREAKER_FAILURES=5
+ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS=60000
 ```
 
 阶段级并发控制排队形态，全局并发控制供应商压力。实际发到模型网关的请求数不会超过全局上限。
@@ -127,16 +132,16 @@ SLA 建议：
 
 优点是 API 稳定、前端简单、能快速给出全局维度摘要；缺点是长 session 会拥有更高权重，少数高风险 session 的证据可能被截断，reason 不能完整解释所有 session 差异。
 
-兼容改进建议：
+已落地的兼容改进：
 
 1. 保留现有 `subjectiveMetrics.dimensions` 作为全局摘要，不破坏前端。
-2. 追加可选字段 `dimensionBreakdowns` 或后续落库表，按 session / topicSegment 记录原始 review。
+2. 追加 `dimensionBreakdowns`，按 session 记录原始四维 review、source、succeeded、weight 和关联 topicSegmentIds。
 3. 前端默认展示全局摘要，需要展开时展示 session 级证据。
-4. 聚合说明写入 metadata，例如 `aggregationMethod = "session_row_weighted_average"`。
+4. 聚合说明写入 `subjectiveMetrics.aggregation`，固定声明 `method=session_row_weighted_average`、`weightBasis=session_row_count`、`reasonStrategy=first_available`。
 
 **隐式信号、客观指标与主观 Judge 的因果顺序是否需要显式化？**
 
-结论：需要。本 PR 已在链路说明文档中显式列出阶段顺序，并通过 `meta.llmJudge` 暴露 LLM stage metadata。
+结论：需要。本 PR 已在链路说明文档中显式列出阶段顺序，并通过 `meta.stageStatuses` 和 `meta.llmJudge` 暴露 stage / LLM metadata。
 
 当前因果顺序：
 
@@ -151,7 +156,7 @@ rawRows
   -> aggregate / suggestions / charts
 ```
 
-后续建议把以下 metadata 进一步落库：
+本 PR 已在响应中暴露运行态 metadata。后续如接入更完整的数据仓库，可把以下字段进一步落库：
 
 - 指标依赖：metricKey、inputStage、sourceFields。
 - Judge 依赖：stage、promptVersion、model、sessionId、segmentId。
@@ -173,7 +178,7 @@ rawRows
 
 结论：需要，但 MVP 可以先用向后兼容字段表达，不改 HTTP 契约。
 
-建议在响应 JSON 中继续扩展：
+本 PR 已在响应 JSON 中扩展：
 
 ```json
 {
@@ -191,7 +196,7 @@ rawRows
 }
 ```
 
-本 PR 已先落地 `meta.llmJudge`，用于表达 LLM 层的成功/失败与耗时；`runState / stageStatuses` 可以作为下一步前端状态机对齐项。
+`meta.llmJudge` 用于表达 LLM 层的成功/失败与耗时；`meta.runState / stageStatuses` 用于前端和 API 消费方区分完整成功、部分降级和硬失败。
 
 **429、超时、JSON 解析失败的重试、熔断、退避策略**
 
@@ -202,13 +207,14 @@ rawRows
 - 重试延迟使用指数退避 + jitter。
 - JSON 解析失败、无有效内容等非瞬态错误不重试，直接进入失败 / 降级路径。
 - 所有失败会记录 `errorClass`，包括 `rate_limited / timeout / provider_4xx / provider_5xx / invalid_response / network / unknown`。
+- stage-local 轻量熔断已落地：`ZEVAL_JUDGE_CIRCUIT_BREAKER_FAILURES` 控制连续失败阈值，`ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS` 控制冷却期；熔断命中会记录 `errorClass=circuit_open` 并走原有降级 / 抛错策略。
 
 MVP 边界：
 
-- 做重试、退避、全局并发池、错误分类。
-- 暂不做跨请求熔断器，不因为单次 run 的失败自动关闭全局 LLM。
+- 做重试、退避、全局并发池、错误分类、进程内 stage-local 轻量熔断。
+- 暂不做持久化熔断状态，不把单进程熔断同步到多实例或跨部署环境。
 - 暂不做供应商多活切换。
-- 后续若 429 或 5xx 连续出现，可基于 `meta.llmJudge` / `judge_runs` 增加短窗口熔断：例如 60 秒内同 stage 失败率超过阈值，则该 stage 临时规则降级。
+- 后续如接入 `judge_runs`，可把熔断状态升级为滑动窗口统计，而不是仅按当前进程内连续失败计数。
 
 ## 降级语义
 

@@ -77,6 +77,7 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "evaluation projection 未知错误";
     response.meta.warnings.push(`结构化质量信号写入失败：${message}`);
+    markEvaluateResponseDegraded(response);
     console.warn(`[JOBS] evaluate runId=${runId} PROJECTION_FAILED ${message}`);
   }
 
@@ -86,6 +87,7 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "评估结果保存失败";
     response.meta.warnings.push(`评估结果保存失败：${message}`);
+    markEvaluateResponseDegraded(response);
     console.warn(`[JOBS] evaluate runId=${runId} SAVE_FAILED ${message}`);
   }
 
@@ -98,6 +100,16 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
     summaryCards: response.summaryCards,
     badCaseCount: response.badCaseAssets.length,
   };
+}
+
+/**
+ * Mark an otherwise completed response as degraded after non-blocking warnings.
+ * @param response Completed evaluate response.
+ */
+function markEvaluateResponseDegraded(response: Awaited<ReturnType<typeof runEvaluatePipeline>>): void {
+  if (response.meta.runState !== "failed") {
+    response.meta.runState = "degraded";
+  }
 }
 
 /**

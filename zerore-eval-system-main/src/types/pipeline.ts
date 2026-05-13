@@ -252,6 +252,21 @@ export type SubjectiveMetrics = {
   }>;
   emotionTurningPoints: EmotionTurningPoint[];
   dimensions: SubjectiveDimensionResult[];
+  aggregation: {
+    method: "session_row_weighted_average";
+    weightBasis: "session_row_count";
+    evidenceMergeLimit: number;
+    reasonStrategy: "first_available";
+    confidenceMethod: "weighted_average";
+  };
+  dimensionBreakdowns: Array<{
+    sessionId: string;
+    weight: number;
+    source: FieldSource;
+    succeeded: boolean;
+    topicSegmentIds: string[];
+    dimensions: SubjectiveDimensionResult[];
+  }>;
   signals: ImplicitSignal[];
   goalCompletions: GoalCompletionResult[];
   recoveryTraces: RecoveryTraceResult[];
@@ -366,6 +381,8 @@ export type EvaluateMeta = {
   hasTimestamp: boolean;
   generatedAt: string;
   warnings: string[];
+  runState: EvaluateRunState;
+  stageStatuses: EvaluateStageRunStatus[];
   llmJudge?: LlmJudgeRunSummary;
   savedEvaluatePath?: string;
   scenarioContext?: ScenarioEvaluateContext;
@@ -378,6 +395,15 @@ export type EvaluateMeta = {
   organizationId?: string;
   projectId?: string;
   workspaceId?: string;
+};
+
+export type EvaluateRunState = "ready" | "degraded" | "failed";
+
+export type EvaluateStageRunStatus = {
+  stage: string;
+  status: "ready" | "degraded" | "failed";
+  durationMs: number;
+  degradedReason?: string;
 };
 
 /**

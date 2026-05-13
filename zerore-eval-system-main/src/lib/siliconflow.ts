@@ -33,6 +33,8 @@ type SiliconFlowChatResponse = {
 const DEFAULT_LLM_RETRY_ATTEMPTS = 3;
 const DEFAULT_LLM_TIMEOUT_MS = 45000;
 const DEFAULT_LLM_GLOBAL_CONCURRENCY = 4;
+const DEFAULT_LLM_CIRCUIT_BREAKER_FAILURES = 5;
+const DEFAULT_LLM_CIRCUIT_BREAKER_COOLDOWN_MS = 60000;
 
 type SiliconFlowLogContext = {
   stage: string;
@@ -72,6 +74,24 @@ export async function requestSiliconFlowChatCompletion(
   messages: SiliconFlowMessage[],
   context: SiliconFlowLogContext,
 ): Promise<string> {
+  const circuitState = getOpenCircuitState(context.stage);
+  if (circuitState) {
+    const promptVersion = getPromptVersionForRequestStage(context.stage);
+    const judgeProfile = getZevalJudgeProfileSnapshot();
+    const degradedReason = `LLM circuit breaker open for stage=${context.stage} until=${new Date(circuitState.openUntil).toISOString()}`;
+    console.warn(`${buildLlmLogPrefix(context)} CIRCUIT_OPEN degradedReason=${degradedReason}`);
+    recordLlmTelemetry(context, {
+      status: "failed",
+      queuedMs: 0,
+      durationMs: 0,
+      attempts: 0,
+      model: judgeProfile.model,
+      promptVersion,
+      errorClass: "circuit_open",
+      degradedReason,
+    });
+    throw new Error(degradedReason);
+  }
   return runWithLlmGlobalConcurrency((queueInfo) =>
     requestSiliconFlowChatCompletionUnbounded(messages, context, queueInfo),
   );
@@ -168,6 +188,7 @@ async function requestSiliconFlowChatCompletionUnbounded(
         model,
         promptVersion,
       });
+      resetCircuitState(context.stage);
       return content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown";
@@ -176,6 +197,7 @@ async function requestSiliconFlowChatCompletionUnbounded(
         `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} queuedMs=${queueInfo.queuedMs} durationMs=${durationMs} errorClass=${classifyLlmError(error)} retryable=${isRetryableLlmError(error)} message=${message}`,
       );
       if (attempt >= maxAttempts || !isRetryableLlmError(error)) {
+        updateCircuitState(context.stage, classifyLlmError(error));
         recordLlmTelemetry(context, {
           status: "failed",
           queuedMs: queueInfo.queuedMs,
@@ -208,6 +230,7 @@ type LlmQueueItem<T> = {
 let activeLlmRequests = 0;
 const pendingLlmRequests: LlmQueueItem<unknown>[] = [];
 const llmTelemetryByRunId = new Map<string, LlmRequestTelemetry[]>();
+const circuitStateByStage = new Map<string, { failures: number; openUntil: number }>();
 
 /**
  * Run one provider call inside a process-wide concurrency limit.
@@ -299,6 +322,68 @@ function resolveLlmGlobalConcurrency(): number {
     process.env.ZEVAL_JUDGE_GLOBAL_CONCURRENCY ?? process.env.ZEVAL_LLM_GLOBAL_CONCURRENCY,
     DEFAULT_LLM_GLOBAL_CONCURRENCY,
   );
+}
+
+/**
+ * Return an open circuit for a stage, or clear an expired one.
+ * @param stage LLM stage.
+ * @returns Open circuit state, if any.
+ */
+function getOpenCircuitState(stage: string): { failures: number; openUntil: number } | null {
+  const state = circuitStateByStage.get(stage);
+  if (!state) {
+    return null;
+  }
+  if (state.openUntil <= 0) {
+    return null;
+  }
+  if (state.openUntil <= Date.now()) {
+    circuitStateByStage.delete(stage);
+    return null;
+  }
+  return state;
+}
+
+/**
+ * Reset the circuit breaker after a successful provider response.
+ * @param stage LLM stage.
+ */
+function resetCircuitState(stage: string): void {
+  circuitStateByStage.delete(stage);
+}
+
+/**
+ * Update stage-local circuit breaker state after a terminal request failure.
+ * @param stage LLM stage.
+ * @param errorClass Classified error.
+ */
+function updateCircuitState(stage: string, errorClass: string): void {
+  if (!isCircuitBreakerError(errorClass)) {
+    return;
+  }
+  const threshold = resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_CIRCUIT_BREAKER_FAILURES,
+    DEFAULT_LLM_CIRCUIT_BREAKER_FAILURES,
+  );
+  const cooldownMs = resolvePositiveInteger(
+    process.env.ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS,
+    DEFAULT_LLM_CIRCUIT_BREAKER_COOLDOWN_MS,
+  );
+  const current = circuitStateByStage.get(stage);
+  const failures = (current?.failures ?? 0) + 1;
+  circuitStateByStage.set(stage, {
+    failures,
+    openUntil: failures >= threshold ? Date.now() + cooldownMs : 0,
+  });
+}
+
+/**
+ * Decide whether an error should count toward circuit breaking.
+ * @param errorClass Classified error.
+ * @returns Whether the error is provider/transient capacity related.
+ */
+function isCircuitBreakerError(errorClass: string): boolean {
+  return errorClass === "rate_limited" || errorClass === "provider_5xx" || errorClass === "timeout" || errorClass === "network";
 }
 
 /**
@@ -523,6 +608,9 @@ function classifyLlmError(error: unknown): string {
   }
   if (/fetch failed|network/i.test(message)) {
     return "network";
+  }
+  if (/circuit breaker open/i.test(message)) {
+    return "circuit_open";
   }
   return "unknown";
 }

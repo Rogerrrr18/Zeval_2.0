@@ -28,17 +28,19 @@ rawRows
 4. `src/pipeline/goalCompletion.ts` 将多 session goal completion LLM fallback 从串行改为有界并发，默认 4，可用 `ZEVAL_JUDGE_GOAL_CONCURRENCY` 覆盖。
 5. `src/pipeline/recoveryTrace.ts` 将 completed recovery trace 的 LLM 总结从串行改为有界并发，默认 4，可用 `ZEVAL_JUDGE_RECOVERY_CONCURRENCY` 覆盖。
 6. `src/pipeline/subjectiveMetrics.ts` 复用共享并发工具，并让 session dimension judge 的并发上限可回退到全局配置。
-7. `EvaluateResponse.meta.llmJudge` 增加运行时观测摘要，返回每个 LLM stage 的请求数、成功/失败、平均排队耗时、平均请求耗时、最大重试次数，以及最近 20 条请求的 session / segment / error metadata。
-8. `EvaluateResponse.meta.runState / stageStatuses` 增加评估级状态机，区分 ready / degraded / failed，并把 warnings、LLM 降级、projection 写入失败统一反馈到响应 metadata。
-9. `subjectiveMetrics.dimensionBreakdowns / aggregation` 增加 session 级四维 Judge 明细与聚合口径说明，保留现有 `dimensions` 全局摘要不破坏前端。
-10. `src/lib/siliconflow.ts` 增加 stage-local 轻量熔断；连续 provider / timeout / network / rate limit 失败达到阈值后，该 stage 在冷却期内直接进入降级路径，避免无意义排队和请求风暴。
+7. `src/pipeline/segmenter.ts` 将多 session topic continuity review 改为有界并发；单 session 内仍保持顺序，避免破坏 active segment 的依赖关系。
+8. `src/pipeline/subjectiveMetrics.ts` 将四维 subjective dimension judge 与 goal completion → recovery trace 链并行启动；recovery 仍等待 goal completion，维持业务依赖。
+9. `EvaluateResponse.meta.llmJudge` 增加运行时观测摘要，返回每个 LLM stage 的请求数、成功/失败、平均排队耗时、平均请求耗时、最大重试次数，以及最近 20 条请求的 session / segment / error metadata。
+10. `EvaluateResponse.meta.runState / stageStatuses` 增加评估级状态机，区分 ready / degraded / failed，并把 warnings、LLM 降级、projection 写入失败统一反馈到响应 metadata。
+11. `subjectiveMetrics.dimensionBreakdowns / aggregation` 增加 session 级四维 Judge 明细与聚合口径说明，保留现有 `dimensions` 全局摘要不破坏前端。
+12. `src/lib/siliconflow.ts` 增加 stage-local 轻量熔断；连续 provider / timeout / network / rate limit 失败达到阈值后，该 stage 在冷却期内直接进入降级路径，避免无意义排队和请求风暴。
 
 ## 链路现状说明
 
 | 阶段 | 代码入口 | LLM stage | 输入粒度 | 并发形态 | 失败行为 |
 | --- | --- | --- | --- | --- | --- |
 | normalize | `src/pipeline/enrich.ts` → `normalizeRawRows` | 无 | 全量 rows | 同步规则 | 不涉及 LLM |
-| topic segment | `src/pipeline/segmenter.ts` → `buildTopicSegments` | `topic_continuity_review` | session 内长间隔相邻上下文 | session 顺序；LLM 请求进入全局池 | 当前为强调用；失败会让 parse stage 失败 |
+| topic segment | `src/pipeline/segmenter.ts` → `buildTopicSegments` | `topic_continuity_review` | session 内长间隔相邻上下文 | `ZEVAL_JUDGE_TOPIC_CONCURRENCY` 跨 session 并发；单 session 内顺序；LLM 请求进入全局池 | 当前为强调用；失败会让 parse stage 失败 |
 | segment emotion | `src/pipeline/emotion.ts` → `scoreTopicSegmentEmotions` | `segment_emotion_baseline` | topic segment | `ZEVAL_JUDGE_SEGMENT_CONCURRENCY` + 全局池 | 单 segment LLM 失败回退规则情绪基线 |
 | objective metrics | `src/pipeline/objectiveMetrics.ts` | 无 | enriched rows | 本地规则 | 不涉及 LLM |
 | implicit signals | `src/pipeline/signals.ts` | 无 | enriched rows | 本地规则 | 不涉及 LLM |
@@ -51,6 +53,7 @@ rawRows
 
 ```text
 ZEVAL_JUDGE_GLOBAL_CONCURRENCY=4
+ZEVAL_JUDGE_TOPIC_CONCURRENCY=4
 ZEVAL_JUDGE_SEGMENT_CONCURRENCY=4
 ZEVAL_JUDGE_SESSION_CONCURRENCY=4
 ZEVAL_JUDGE_GOAL_CONCURRENCY=4
@@ -74,7 +77,7 @@ ZEVAL_JUDGE_CIRCUIT_BREAKER_COOLDOWN_MS=60000
 
 - 供应商限流和成本发生在模型网关层，不发生在单个 pipeline stage 层；只做阶段级 limit 时，多个阶段叠加仍可能超过 key / provider 的承载能力。
 - 阶段级 limit 仍有价值，用来控制某一类任务的排队形态。例如 segment emotion 可能数量很多，不应完全挤占 session dimension judge。
-- 当前实现采用“两层阀门”：`ZEVAL_JUDGE_SEGMENT_CONCURRENCY / ZEVAL_JUDGE_GOAL_CONCURRENCY / ZEVAL_JUDGE_RECOVERY_CONCURRENCY / ZEVAL_JUDGE_SESSION_CONCURRENCY` 控制阶段内并发，`ZEVAL_JUDGE_GLOBAL_CONCURRENCY` 控制真正发往模型网关的总并发。
+- 当前实现采用“两层阀门”：`ZEVAL_JUDGE_TOPIC_CONCURRENCY / ZEVAL_JUDGE_SEGMENT_CONCURRENCY / ZEVAL_JUDGE_GOAL_CONCURRENCY / ZEVAL_JUDGE_RECOVERY_CONCURRENCY / ZEVAL_JUDGE_SESSION_CONCURRENCY` 控制阶段内并发，`ZEVAL_JUDGE_GLOBAL_CONCURRENCY` 控制真正发往模型网关的总并发。
 
 **哪些阶段适合异步化，哪些必须阻塞在单次评估响应内？**
 

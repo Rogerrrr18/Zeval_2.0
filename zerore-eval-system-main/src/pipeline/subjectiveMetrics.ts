@@ -66,12 +66,12 @@ export async function buildSubjectiveMetrics(
     throw new Error("LLM Judge 是当前评估的强依赖，但本次请求关闭了 useLlm。");
   }
 
-  const goalCompletions = await buildGoalCompletions(rows, useLlm, runId, { judgeRequired });
-  const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired });
   const grouped = groupRowsBySession(rows);
   const fallbackBreakdowns = buildDimensionBreakdowns(grouped, signals, false);
 
   if (!useLlm) {
+    const goalCompletions = await buildGoalCompletions(rows, useLlm, runId, { judgeRequired });
+    const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired });
     return {
       status: "degraded",
       emotionCurve,
@@ -85,37 +85,49 @@ export async function buildSubjectiveMetrics(
     };
   }
 
-  try {
-    const sessionReviews = await mapWithConcurrency(
-      [...grouped.entries()],
-      resolveSessionJudgeConcurrency(),
-      async ([sessionId, sessionRows]) => {
-        try {
-          return {
-            sessionId,
-            dimensions: await judgeSessionDimensionsWithLlm(sessionRows, signals, runId, { requireComplete: judgeRequired }),
-            weight: sessionRows.length,
-            topicSegmentIds: getTopicSegmentIds(sessionRows),
-            succeeded: true,
-            source: "llm" as const,
-          };
-        } catch (error) {
-          if (judgeRequired) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`LLM Judge 失败，session=${sessionId}：${message}`);
-          }
-          console.error("Session subjective judge failed:", sessionId, error);
-          return {
-            sessionId,
-            dimensions: buildRuleBasedDimensions(sessionRows, signals),
-            weight: sessionRows.length,
-            topicSegmentIds: getTopicSegmentIds(sessionRows),
-            succeeded: false,
-            source: "rule" as const,
-          };
+  const goalAndRecoveryPromise = buildGoalCompletions(rows, useLlm, runId, { judgeRequired }).then((goalCompletions) =>
+    buildRecoveryTraces(rows, goalCompletions, useLlm, runId, { judgeRequired }).then((recoveryTraces) => ({
+      goalCompletions,
+      recoveryTraces,
+    })),
+  );
+
+  const sessionReviewsPromise = mapWithConcurrency(
+    [...grouped.entries()],
+    resolveSessionJudgeConcurrency(),
+    async ([sessionId, sessionRows]) => {
+      try {
+        return {
+          sessionId,
+          dimensions: await judgeSessionDimensionsWithLlm(sessionRows, signals, runId, { requireComplete: judgeRequired }),
+          weight: sessionRows.length,
+          topicSegmentIds: getTopicSegmentIds(sessionRows),
+          succeeded: true,
+          source: "llm" as const,
+        };
+      } catch (error) {
+        if (judgeRequired) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`LLM Judge 失败，session=${sessionId}：${message}`);
         }
-      },
-    );
+        console.error("Session subjective judge failed:", sessionId, error);
+        return {
+          sessionId,
+          dimensions: buildRuleBasedDimensions(sessionRows, signals),
+          weight: sessionRows.length,
+          topicSegmentIds: getTopicSegmentIds(sessionRows),
+          succeeded: false,
+          source: "rule" as const,
+        };
+      }
+    },
+  );
+
+  try {
+    const [{ goalCompletions, recoveryTraces }, sessionReviews] = await Promise.all([
+      goalAndRecoveryPromise,
+      sessionReviewsPromise,
+    ]);
 
     return {
       status: sessionReviews.every((review) => review.succeeded) ? "ready" : "degraded",
@@ -143,6 +155,8 @@ export async function buildSubjectiveMetrics(
       throw error;
     }
     console.error("SiliconFlow subjective judge failed:", error);
+    const goalCompletions = await buildGoalCompletions(rows, false, runId, { judgeRequired: false });
+    const recoveryTraces = await buildRecoveryTraces(rows, goalCompletions, false, runId, { judgeRequired: false });
     return {
       status: "degraded",
       emotionCurve,

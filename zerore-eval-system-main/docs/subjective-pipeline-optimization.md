@@ -57,6 +57,159 @@ ZEVAL_JUDGE_RETRY_ATTEMPTS=3
 
 阶段级并发控制排队形态，全局并发控制供应商压力。实际发到模型网关的请求数不会超过全局上限。
 
+## 设计问题对齐
+
+### 4.1 并发与队列
+
+**分段情绪 LLM 与 session 级主观 Judge 是否共享全局并发池？**
+
+结论：共享全局池，同时保留阶段级 limit。
+
+理由：
+
+- 供应商限流和成本发生在模型网关层，不发生在单个 pipeline stage 层；只做阶段级 limit 时，多个阶段叠加仍可能超过 key / provider 的承载能力。
+- 阶段级 limit 仍有价值，用来控制某一类任务的排队形态。例如 segment emotion 可能数量很多，不应完全挤占 session dimension judge。
+- 当前实现采用“两层阀门”：`ZEVAL_JUDGE_SEGMENT_CONCURRENCY / ZEVAL_JUDGE_GOAL_CONCURRENCY / ZEVAL_JUDGE_RECOVERY_CONCURRENCY / ZEVAL_JUDGE_SESSION_CONCURRENCY` 控制阶段内并发，`ZEVAL_JUDGE_GLOBAL_CONCURRENCY` 控制真正发往模型网关的总并发。
+
+**哪些阶段适合异步化，哪些必须阻塞在单次评估响应内？**
+
+结论：MVP 中，生成用户当次评估结果所必需的阶段继续阻塞；可复算、可后补、可投影的阶段异步化。
+
+| 阶段 | MVP 响应内阻塞 | 适合 async/job | 理由 |
+| --- | --- | --- | --- |
+| normalize / topic segment | 是 | 否 | 后续所有指标依赖 enriched rows 和 topic segment |
+| segment emotion | 是 | 部分可后置 | 情绪曲线、恢复判断和主观维度依赖情绪基线；后续可做“先规则后 LLM 修正” |
+| objective metrics | 是 | 否 | 本地规则，成本低，是主观输入和图表基础 |
+| implicit signals | 是 | 否 | 主观 Judge 上下文和建议触发依赖这些风险信号 |
+| goal completion | 是 | 部分可后置 | 当前摘要、badcase、suggestion 依赖目标达成；只有大批量离线场景适合后置 |
+| recovery trace | 是 | 部分可后置 | 当前报告展示依赖；LLM repair strategy 文本可后补 |
+| subjective dimension judge | 是 | 大批量可 job | 工作台需要当次返回主观维度；批量评测可以 async |
+| evaluation projection / result persistence | 否 | 是 | 失败已进入 warnings，不阻断主响应 |
+| badcase harvest / dataset admission | 否 | 是 | 候选入池可异步重试，避免拖慢用户响应 |
+
+SLA 建议：
+
+- 同步工作台评估：小样本目标 30–60 秒内返回；超过阈值建议使用 `asyncMode`。
+- SSE 模式：每个 stage 必须有 running / done / failed 事件，避免用户误以为卡死。
+- async job：必须暴露 job status、attempt、lastError、warnings、startedAt、finishedAt。
+
+可观测字段：
+
+- stage 级：`stage / status / durationMs / warningCount / degradedReason`
+- LLM 请求级：`stage / queuedMs / durationMs / attempts / errorClass / promptVersion / model / sessionId / segmentId`
+- job 级：`jobId / status / attempts / queuedAt / startedAt / finishedAt / lastError`
+
+**是否把四维 Judge 拆成 segment 级？**
+
+结论：MVP 保留 session 级单次调用，不拆 segment 级。
+
+权衡：
+
+| 方案 | 优点 | 风险 |
+| --- | --- | --- |
+| session 级 Judge（当前） | 保留多轮上下文；调用次数低；聚合逻辑简单；API 契约稳定 | 单个 session 很长时 token 较高；失败粒度较粗 |
+| segment 级 Judge | 失败粒度更细；可局部重试；可按 topic 展示维度 | 调用数显著增加；跨 topic 上下文丢失；多 segment 聚合语义更复杂 |
+
+推荐路径：短期保持 session 级；只有当出现长会话 token 超限、或产品需要“每个 topic 的四维评分”时，再引入 segment 级 Judge，并新增字段承载 segment dimension reviews，避免改变现有 `subjectiveMetrics.dimensions` 的聚合语义。
+
+### 4.2 数据汇总与语义
+
+**多 session、多 segment 的四维聚合是否满足可解释性？**
+
+当前策略可作为 MVP 近似，但不应被解释为严格统计结论。
+
+现状：
+
+- score：按 session 行数加权平均后四舍五入。
+- confidence：按 session 行数加权平均。
+- evidence：只合并前两个可用片段。
+- reason：取第一个可用 reason。
+
+优点是 API 稳定、前端简单、能快速给出全局维度摘要；缺点是长 session 会拥有更高权重，少数高风险 session 的证据可能被截断，reason 不能完整解释所有 session 差异。
+
+兼容改进建议：
+
+1. 保留现有 `subjectiveMetrics.dimensions` 作为全局摘要，不破坏前端。
+2. 追加可选字段 `dimensionBreakdowns` 或后续落库表，按 session / topicSegment 记录原始 review。
+3. 前端默认展示全局摘要，需要展开时展示 session 级证据。
+4. 聚合说明写入 metadata，例如 `aggregationMethod = "session_row_weighted_average"`。
+
+**隐式信号、客观指标与主观 Judge 的因果顺序是否需要显式化？**
+
+结论：需要。本 PR 已在链路说明文档中显式列出阶段顺序，并通过 `meta.llmJudge` 暴露 LLM stage metadata。
+
+当前因果顺序：
+
+```text
+rawRows
+  -> normalize
+  -> topic segment
+  -> segment emotion
+  -> objective metrics
+  -> implicit signals
+  -> goal completion / recovery trace / subjective dimension judge
+  -> aggregate / suggestions / charts
+```
+
+后续建议把以下 metadata 进一步落库：
+
+- 指标依赖：metricKey、inputStage、sourceFields。
+- Judge 依赖：stage、promptVersion、model、sessionId、segmentId。
+- 降级原因：degradedReason、errorClass、fallbackSource。
+
+### 4.3 报错、降级与产品一致性
+
+**当前降级路径对用户可见字段的影响**
+
+| 场景 | HTTP / Job 行为 | 用户可见字段 |
+| --- | --- | --- |
+| `useLlm=false, judgeRequired=false` | 评估成功 | `subjectiveMetrics.status=degraded`；`meta.llmJudge.enabled=false`；warnings 包含主观降级提示 |
+| `useLlm=false, judgeRequired=true` | route 400；pipeline 也会保护性抛错 | 返回 error，不产出评估结果 |
+| `useLlm=true, judgeRequired=false` 且单 session LLM 失败 | 评估成功 | 对应 session 回退规则结果；`subjectiveMetrics.status=degraded`；`meta.llmJudge.failedRequests > 0`；triggeredRules 带 fallback 标记 |
+| `useLlm=true, judgeRequired=true` 且 LLM 失败 | 评估失败 | 同步 JSON 500；SSE `type=error`；async job failed |
+| projection / result persistence 失败 | 主评估成功 | `meta.warnings` / job result warnings 追加失败原因，不阻断响应 |
+
+**是否需要比 200 / 500 更细的状态机？**
+
+结论：需要，但 MVP 可以先用向后兼容字段表达，不改 HTTP 契约。
+
+建议在响应 JSON 中继续扩展：
+
+```json
+{
+  "meta": {
+    "runState": "ready | degraded | failed",
+    "stageStatuses": [
+      {
+        "stage": "subjective",
+        "status": "ready | degraded | failed",
+        "durationMs": 1234,
+        "degradedReason": "llm_fallback_failed"
+      }
+    ]
+  }
+}
+```
+
+本 PR 已先落地 `meta.llmJudge`，用于表达 LLM 层的成功/失败与耗时；`runState / stageStatuses` 可以作为下一步前端状态机对齐项。
+
+**429、超时、JSON 解析失败的重试、熔断、退避策略**
+
+当前实现：
+
+- `ZEVAL_JUDGE_RETRY_ATTEMPTS` 控制最大重试次数，默认 3。
+- 408 / 409 / 425 / 429 / 5xx / timeout / network 会重试。
+- 重试延迟使用指数退避 + jitter。
+- JSON 解析失败、无有效内容等非瞬态错误不重试，直接进入失败 / 降级路径。
+- 所有失败会记录 `errorClass`，包括 `rate_limited / timeout / provider_4xx / provider_5xx / invalid_response / network / unknown`。
+
+MVP 边界：
+
+- 做重试、退避、全局并发池、错误分类。
+- 暂不做跨请求熔断器，不因为单次 run 的失败自动关闭全局 LLM。
+- 暂不做供应商多活切换。
+- 后续若 429 或 5xx 连续出现，可基于 `meta.llmJudge` / `judge_runs` 增加短窗口熔断：例如 60 秒内同 stage 失败率超过阈值，则该 stage 临时规则降级。
+
 ## 降级语义
 
 | useLlm | judgeRequired | 入口行为 | LLM 调用失败时 | 用户可见结果 |

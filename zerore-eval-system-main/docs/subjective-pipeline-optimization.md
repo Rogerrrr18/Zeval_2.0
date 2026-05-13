@@ -28,6 +28,21 @@ rawRows
 4. `src/pipeline/goalCompletion.ts` 将多 session goal completion LLM fallback 从串行改为有界并发，默认 4，可用 `ZEVAL_JUDGE_GOAL_CONCURRENCY` 覆盖。
 5. `src/pipeline/recoveryTrace.ts` 将 completed recovery trace 的 LLM 总结从串行改为有界并发，默认 4，可用 `ZEVAL_JUDGE_RECOVERY_CONCURRENCY` 覆盖。
 6. `src/pipeline/subjectiveMetrics.ts` 复用共享并发工具，并让 session dimension judge 的并发上限可回退到全局配置。
+7. `EvaluateResponse.meta.llmJudge` 增加运行时观测摘要，返回每个 LLM stage 的请求数、成功/失败、平均排队耗时、平均请求耗时、最大重试次数，以及最近 20 条请求的 session / segment / error metadata。
+
+## 链路现状说明
+
+| 阶段 | 代码入口 | LLM stage | 输入粒度 | 并发形态 | 失败行为 |
+| --- | --- | --- | --- | --- | --- |
+| normalize | `src/pipeline/enrich.ts` → `normalizeRawRows` | 无 | 全量 rows | 同步规则 | 不涉及 LLM |
+| topic segment | `src/pipeline/segmenter.ts` → `buildTopicSegments` | `topic_continuity_review` | session 内长间隔相邻上下文 | session 顺序；LLM 请求进入全局池 | 当前为强调用；失败会让 parse stage 失败 |
+| segment emotion | `src/pipeline/emotion.ts` → `scoreTopicSegmentEmotions` | `segment_emotion_baseline` | topic segment | `ZEVAL_JUDGE_SEGMENT_CONCURRENCY` + 全局池 | 单 segment LLM 失败回退规则情绪基线 |
+| objective metrics | `src/pipeline/objectiveMetrics.ts` | 无 | enriched rows | 本地规则 | 不涉及 LLM |
+| implicit signals | `src/pipeline/signals.ts` | 无 | enriched rows | 本地规则 | 不涉及 LLM |
+| goal completion | `src/pipeline/goalCompletion.ts` | `goal_completion_judge` | session | `ZEVAL_JUDGE_GOAL_CONCURRENCY` + 全局池；仅 unclear 升级 LLM | `judgeRequired=false` 回退规则；`true` 抛错 |
+| recovery trace | `src/pipeline/recoveryTrace.ts` | `recovery_trace_strategy` | completed recovery span | `ZEVAL_JUDGE_RECOVERY_CONCURRENCY` + 全局池 | `judgeRequired=false` 保留规则 trace；`true` 抛错 |
+| subjective dimensions | `src/pipeline/subjectiveMetrics.ts` | `subjective_dimension_judge` | session transcript，含多个 topic segment | `ZEVAL_JUDGE_SESSION_CONCURRENCY` + 全局池 | `judgeRequired=false` 回退规则维度；`true` 抛错 |
+| aggregation | `aggregateDimensionReviews` | 无 | 多 session dimension reviews | 本地聚合 | 按 session 行数加权；reason/evidence 为近似合并 |
 
 ## 并发配置
 
@@ -49,9 +64,43 @@ ZEVAL_JUDGE_RETRY_ATTEMPTS=3
 - 单个 session 的 LLM 失败且 `judgeRequired=false`：该 session 回退规则结果，并在对应 `triggeredRules` 中记录 fallback 标记。
 - 单个 session 的 LLM 失败且 `judgeRequired=true`：抛错，API 返回失败。
 
+## 运行时观测
+
+每次 `requestSiliconFlowChatCompletion` 都会记录不含 prompt / transcript 的元数据：
+
+```json
+{
+  "stage": "segment_emotion_baseline",
+  "status": "success",
+  "queuedMs": 12,
+  "durationMs": 1840,
+  "attempts": 1,
+  "model": "Qwen/Qwen3.5-27B",
+  "promptVersion": "segment-emotion-baseline-v1.0.0",
+  "sessionId": "s1",
+  "segmentId": "s1_topic_1"
+}
+```
+
+失败请求会额外携带：
+
+```json
+{
+  "errorClass": "rate_limited",
+  "degradedReason": "SiliconFlow 请求失败: 429"
+}
+```
+
+评估响应会在 `meta.llmJudge` 中返回聚合结果：
+
+- `totalRequests / succeededRequests / failedRequests`
+- `stages[].avgQueuedMs / avgDurationMs / maxAttempts`
+- `recentRequests[]` 最近 20 条请求级 metadata
+
+这些字段用于排查限流、超时、JSON 解析失败和队列堆积，不进入用户侧解释结论。
+
 ## 后续建议
 
 1. 如果要上线 `auto_disagreement`，先设计双轨评估产物：规则轨结果、LLM 轨结果、冲突阈值、人工校准标签和入池状态。
 2. 瘦日志下 `auto_fn` 应命名为 FN-proxy，只覆盖文本可见异常，如重复问、负向尾词、异常收尾。
-3. 后续 Supabase 投影可把每次 LLM 调用的排队耗时、attempt、stage、sessionId、segmentId 落到 `judge_runs`，用于排查供应商限流和延迟峰值。
-
+3. 后续 Supabase 投影可把 `meta.llmJudge.recentRequests` 中的排队耗时、attempt、stage、sessionId、segmentId、errorClass 落到 `judge_runs`，用于跨 run 排查供应商限流和延迟峰值。

@@ -41,6 +41,27 @@ type SiliconFlowLogContext = {
   segmentId?: string;
 };
 
+type LlmQueueInfo = {
+  enqueuedAt: number;
+  queueDepthAtEnqueue: number;
+  queuedMs: number;
+};
+
+export type LlmRequestTelemetry = {
+  stage: string;
+  runId: string;
+  status: "success" | "failed";
+  queuedMs: number;
+  durationMs: number;
+  attempts: number;
+  model: string;
+  promptVersion: string | null;
+  sessionId?: string;
+  segmentId?: string;
+  errorClass?: string;
+  degradedReason?: string;
+};
+
 /**
  * Execute a chat completion request against SiliconFlow.
  * @param messages OpenAI-compatible chat messages.
@@ -51,7 +72,9 @@ export async function requestSiliconFlowChatCompletion(
   messages: SiliconFlowMessage[],
   context: SiliconFlowLogContext,
 ): Promise<string> {
-  return runWithLlmGlobalConcurrency(() => requestSiliconFlowChatCompletionUnbounded(messages, context));
+  return runWithLlmGlobalConcurrency((queueInfo) =>
+    requestSiliconFlowChatCompletionUnbounded(messages, context, queueInfo),
+  );
 }
 
 /**
@@ -63,6 +86,7 @@ export async function requestSiliconFlowChatCompletion(
 async function requestSiliconFlowChatCompletionUnbounded(
   messages: SiliconFlowMessage[],
   context: SiliconFlowLogContext,
+  queueInfo: LlmQueueInfo,
 ): Promise<string> {
   const config = getSiliconFlowRuntimeConfig();
   const apiKey = config.apiKey;
@@ -83,7 +107,7 @@ async function requestSiliconFlowChatCompletionUnbounded(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_LLM_TIMEOUT_MS);
     console.info(
-      `${logPrefix} START attempt=${attempt}/${maxAttempts} model=${model} judgeProfile=${judgeProfile.profileVersion} promptVersion=${promptVersion ?? "unversioned"} messages=${messages.length}`,
+      `${logPrefix} START attempt=${attempt}/${maxAttempts} model=${model} judgeProfile=${judgeProfile.profileVersion} promptVersion=${promptVersion ?? "unversioned"} messages=${messages.length} queuedMs=${queueInfo.queuedMs} queueDepthAtEnqueue=${queueInfo.queueDepthAtEnqueue}`,
     );
     try {
       const requestBody: Record<string, unknown> = {
@@ -132,14 +156,36 @@ async function requestSiliconFlowChatCompletionUnbounded(
         );
       }
 
-      console.info(`${logPrefix} SUCCESS attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt}`);
+      const durationMs = Date.now() - startedAt;
+      console.info(
+        `${logPrefix} SUCCESS attempt=${attempt}/${maxAttempts} queuedMs=${queueInfo.queuedMs} durationMs=${durationMs}`,
+      );
+      recordLlmTelemetry(context, {
+        status: "success",
+        queuedMs: queueInfo.queuedMs,
+        durationMs,
+        attempts: attempt,
+        model,
+        promptVersion,
+      });
       return content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown";
+      const durationMs = Date.now() - startedAt;
       console.error(
-        `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt} message=${message}`,
+        `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} queuedMs=${queueInfo.queuedMs} durationMs=${durationMs} errorClass=${classifyLlmError(error)} retryable=${isRetryableLlmError(error)} message=${message}`,
       );
       if (attempt >= maxAttempts || !isRetryableLlmError(error)) {
+        recordLlmTelemetry(context, {
+          status: "failed",
+          queuedMs: queueInfo.queuedMs,
+          durationMs,
+          attempts: attempt,
+          model,
+          promptVersion,
+          errorClass: classifyLlmError(error),
+          degradedReason: message,
+        });
         throw error;
       }
       await sleep(buildRetryDelayMs(attempt));
@@ -152,13 +198,16 @@ async function requestSiliconFlowChatCompletionUnbounded(
 }
 
 type LlmQueueItem<T> = {
-  operation: () => Promise<T>;
+  operation: (queueInfo: LlmQueueInfo) => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
+  enqueuedAt: number;
+  queueDepthAtEnqueue: number;
 };
 
 let activeLlmRequests = 0;
 const pendingLlmRequests: LlmQueueItem<unknown>[] = [];
+const llmTelemetryByRunId = new Map<string, LlmRequestTelemetry[]>();
 
 /**
  * Run one provider call inside a process-wide concurrency limit.
@@ -168,9 +217,16 @@ const pendingLlmRequests: LlmQueueItem<unknown>[] = [];
  * @param operation Provider request operation.
  * @returns Operation result.
  */
-function runWithLlmGlobalConcurrency<T>(operation: () => Promise<T>): Promise<T> {
+function runWithLlmGlobalConcurrency<T>(operation: (queueInfo: LlmQueueInfo) => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    pendingLlmRequests.push({ operation, resolve, reject } as LlmQueueItem<unknown>);
+    const queueDepthAtEnqueue = activeLlmRequests + pendingLlmRequests.length;
+    pendingLlmRequests.push({
+      operation,
+      resolve,
+      reject,
+      enqueuedAt: Date.now(),
+      queueDepthAtEnqueue,
+    } as LlmQueueItem<unknown>);
     drainLlmQueue();
   });
 }
@@ -186,8 +242,13 @@ function drainLlmQueue(): void {
       return;
     }
     activeLlmRequests += 1;
+    const queuedMs = Math.max(0, Date.now() - item.enqueuedAt);
     item
-      .operation()
+      .operation({
+        enqueuedAt: item.enqueuedAt,
+        queueDepthAtEnqueue: item.queueDepthAtEnqueue,
+        queuedMs,
+      })
       .then(item.resolve)
       .catch(item.reject)
       .finally(() => {
@@ -195,6 +256,38 @@ function drainLlmQueue(): void {
         drainLlmQueue();
       });
   }
+}
+
+/**
+ * Consume recorded LLM telemetry for one run id.
+ * @param runId Evaluation run id.
+ * @returns Request telemetry captured since the previous consume call.
+ */
+export function consumeLlmRequestTelemetry(runId: string): LlmRequestTelemetry[] {
+  const records = llmTelemetryByRunId.get(runId) ?? [];
+  llmTelemetryByRunId.delete(runId);
+  return records;
+}
+
+/**
+ * Record one completed LLM request for run-level observability.
+ */
+function recordLlmTelemetry(
+  context: SiliconFlowLogContext,
+  record: Omit<LlmRequestTelemetry, "stage" | "runId" | "sessionId" | "segmentId">,
+): void {
+  if (!context.runId) {
+    return;
+  }
+  const records = llmTelemetryByRunId.get(context.runId) ?? [];
+  records.push({
+    ...record,
+    stage: context.stage,
+    runId: context.runId,
+    sessionId: context.sessionId,
+    segmentId: context.segmentId,
+  });
+  llmTelemetryByRunId.set(context.runId, records.slice(-200));
 }
 
 /**
@@ -404,6 +497,34 @@ function isRetryableLlmError(error: unknown): boolean {
     /SiliconFlow 请求失败: (408|409|425|429|5\d\d)/.test(message) ||
     /非 JSON 响应: (408|409|425|429|5\d\d)/.test(message)
   );
+}
+
+/**
+ * Classify common LLM provider failures for logs and run metadata.
+ * @param error Request error.
+ * @returns Stable error class.
+ */
+function classifyLlmError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout|timed out/i.test(message)) {
+    return "timeout";
+  }
+  if (/SiliconFlow 请求失败: 429/.test(message)) {
+    return "rate_limited";
+  }
+  if (/SiliconFlow 请求失败: 4\d\d/.test(message)) {
+    return "provider_4xx";
+  }
+  if (/SiliconFlow 请求失败: 5\d\d/.test(message)) {
+    return "provider_5xx";
+  }
+  if (/JSON|未找到 JSON|未返回有效内容|非 JSON/i.test(message)) {
+    return "invalid_response";
+  }
+  if (/fetch failed|network/i.test(message)) {
+    return "network";
+  }
+  return "unknown";
 }
 
 /**

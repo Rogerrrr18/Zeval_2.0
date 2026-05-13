@@ -366,6 +366,7 @@ export type EvaluateMeta = {
   hasTimestamp: boolean;
   generatedAt: string;
   warnings: string[];
+  llmJudge?: LlmJudgeRunSummary;
   savedEvaluatePath?: string;
   scenarioContext?: ScenarioEvaluateContext;
   piiRedaction?: {
@@ -377,6 +378,39 @@ export type EvaluateMeta = {
   organizationId?: string;
   projectId?: string;
   workspaceId?: string;
+};
+
+/**
+ * Runtime observability for LLM judge calls made during one evaluation run.
+ * Contains timing and status metadata only, never prompt or transcript content.
+ */
+export type LlmJudgeRunSummary = {
+  enabled: boolean;
+  totalRequests: number;
+  succeededRequests: number;
+  failedRequests: number;
+  stages: Array<{
+    stage: string;
+    totalRequests: number;
+    succeededRequests: number;
+    failedRequests: number;
+    avgQueuedMs: number;
+    avgDurationMs: number;
+    maxAttempts: number;
+  }>;
+  recentRequests: Array<{
+    stage: string;
+    status: "success" | "failed";
+    queuedMs: number;
+    durationMs: number;
+    attempts: number;
+    model: string;
+    promptVersion: string | null;
+    sessionId?: string;
+    segmentId?: string;
+    errorClass?: string;
+    degradedReason?: string;
+  }>;
 };
 
 /**

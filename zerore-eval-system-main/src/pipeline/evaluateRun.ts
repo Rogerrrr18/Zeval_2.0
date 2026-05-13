@@ -4,6 +4,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { consumeLlmRequestTelemetry, type LlmRequestTelemetry } from "@/lib/siliconflow";
 import { buildBadCaseAssets } from "@/pipeline/badCases";
 import { buildChartPayloads } from "@/pipeline/chartBuilder";
 import { enrichRows, toEnrichedCsv } from "@/pipeline/enrich";
@@ -16,7 +17,7 @@ import { buildSubjectiveMetrics } from "@/pipeline/subjectiveMetrics";
 import { buildSuggestions } from "@/pipeline/suggest";
 import { buildSummaryCards } from "@/pipeline/summary";
 import { getScenarioTemplateById } from "@/scenarios";
-import type { EvaluateResponse, RawChatlogRow, ScenarioEvaluateContext } from "@/types/pipeline";
+import type { EvaluateResponse, LlmJudgeRunSummary, RawChatlogRow, ScenarioEvaluateContext } from "@/types/pipeline";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { EvalTrace } from "@/types/eval-trace";
 import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
@@ -146,6 +147,7 @@ export async function runEvaluatePipeline(
   if (subjectiveMetrics.status !== "ready" && !judgeRequired) {
     warnings.push("主观评估当前为降级模式（LLM judge 调用失败或未启用）。");
   }
+  const llmTelemetry = consumeLlmRequestTelemetry(options.runId);
 
   let artifactPath: string | undefined;
   if (options.persistArtifact ?? Boolean(options.artifactBaseName)) {
@@ -164,6 +166,7 @@ export async function runEvaluatePipeline(
       hasTimestamp: rawRows.every((row) => Boolean(row.timestamp)),
       generatedAt: new Date().toISOString(),
       warnings,
+      llmJudge: buildLlmJudgeRunSummary(options.useLlm, llmTelemetry),
       scenarioContext: options.scenarioContext,
     },
     summaryCards,
@@ -185,6 +188,63 @@ export async function runEvaluatePipeline(
   };
 
   return response;
+}
+
+/**
+ * Build response-safe LLM runtime metadata.
+ * @param enabled Whether this evaluate run requested LLM judges.
+ * @param records Request telemetry captured by the LLM client.
+ * @returns Aggregated LLM judge metadata.
+ */
+function buildLlmJudgeRunSummary(
+  enabled: boolean,
+  records: LlmRequestTelemetry[],
+): LlmJudgeRunSummary {
+  const stageGroups = new Map<string, LlmRequestTelemetry[]>();
+  records.forEach((record) => {
+    stageGroups.set(record.stage, [...(stageGroups.get(record.stage) ?? []), record]);
+  });
+
+  return {
+    enabled,
+    totalRequests: records.length,
+    succeededRequests: records.filter((record) => record.status === "success").length,
+    failedRequests: records.filter((record) => record.status === "failed").length,
+    stages: [...stageGroups.entries()].map(([stage, stageRecords]) => ({
+      stage,
+      totalRequests: stageRecords.length,
+      succeededRequests: stageRecords.filter((record) => record.status === "success").length,
+      failedRequests: stageRecords.filter((record) => record.status === "failed").length,
+      avgQueuedMs: averageRounded(stageRecords.map((record) => record.queuedMs)),
+      avgDurationMs: averageRounded(stageRecords.map((record) => record.durationMs)),
+      maxAttempts: Math.max(...stageRecords.map((record) => record.attempts)),
+    })),
+    recentRequests: records.slice(-20).map((record) => ({
+      stage: record.stage,
+      status: record.status,
+      queuedMs: record.queuedMs,
+      durationMs: record.durationMs,
+      attempts: record.attempts,
+      model: record.model,
+      promptVersion: record.promptVersion,
+      sessionId: record.sessionId,
+      segmentId: record.segmentId,
+      errorClass: record.errorClass,
+      degradedReason: record.degradedReason,
+    })),
+  };
+}
+
+/**
+ * Average a list of timing values.
+ * @param values Timing values.
+ * @returns Rounded average, or 0 when empty.
+ */
+function averageRounded(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
 /**

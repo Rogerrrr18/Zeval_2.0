@@ -32,6 +32,50 @@ type SiliconFlowChatResponse = {
 const DEFAULT_LLM_RETRY_ATTEMPTS = 3;
 const DEFAULT_LLM_TIMEOUT_MS = 45000;
 
+// ── Circuit breaker (#6) ─────────────────────────────────────────────────────
+// When the LLM provider is fully down, each request would otherwise burn ~3-4s
+// of retries before failing. After N consecutive failed requests the circuit
+// "opens": further requests fail fast for a cooldown window; once it elapses one
+// probe request is allowed through (half-open) and any success closes it again.
+const CIRCUIT_FAILURE_THRESHOLD = resolvePositiveInteger(
+  process.env.ZEVAL_LLM_CIRCUIT_THRESHOLD,
+  5,
+);
+const CIRCUIT_COOLDOWN_MS = resolvePositiveInteger(
+  process.env.ZEVAL_LLM_CIRCUIT_COOLDOWN_MS,
+  15000,
+);
+let circuitConsecutiveFailures = 0;
+let circuitOpenUntil = 0;
+
+/** Throw a fast-fail error when the breaker is open and still cooling down. */
+function assertCircuitClosed(logPrefix: string): void {
+  const remainingMs = circuitOpenUntil - Date.now();
+  if (remainingMs > 0) {
+    console.warn(`${logPrefix} CIRCUIT_OPEN fast-fail remainingMs=${remainingMs}`);
+    throw new Error(
+      `LLM 服务已熔断：连续失败 ${circuitConsecutiveFailures} 次，请在约 ${Math.ceil(remainingMs / 1000)} 秒后重试。`,
+    );
+  }
+}
+
+/** Reset the breaker after any successful request. */
+function recordCircuitSuccess(): void {
+  circuitConsecutiveFailures = 0;
+  circuitOpenUntil = 0;
+}
+
+/** Count one fully-failed request; trip the breaker once the threshold is hit. */
+function recordCircuitFailure(logPrefix: string): void {
+  circuitConsecutiveFailures += 1;
+  if (circuitConsecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+    circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+    console.error(
+      `${logPrefix} CIRCUIT_TRIPPED consecutiveFailures=${circuitConsecutiveFailures} cooldownMs=${CIRCUIT_COOLDOWN_MS}`,
+    );
+  }
+}
+
 type SiliconFlowLogContext = {
   stage: string;
   runId?: string;
@@ -67,6 +111,9 @@ export async function requestSiliconFlowChatCompletion(
   const promptVersion = getPromptVersionForRequestStage(context.stage);
   const judgeProfile = getZevalJudgeProfileSnapshot();
   const maxAttempts = resolvePositiveInteger(process.env.ZEVAL_JUDGE_RETRY_ATTEMPTS, DEFAULT_LLM_RETRY_ATTEMPTS);
+
+  // Fast-fail when the provider is known to be down (breaker open).
+  assertCircuitClosed(logPrefix);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
@@ -125,6 +172,7 @@ export async function requestSiliconFlowChatCompletion(
       }
 
       console.info(`${logPrefix} SUCCESS attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt}`);
+      recordCircuitSuccess();
       return content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown";
@@ -132,6 +180,7 @@ export async function requestSiliconFlowChatCompletion(
         `${logPrefix} ERROR attempt=${attempt}/${maxAttempts} durationMs=${Date.now() - startedAt} message=${message}`,
       );
       if (attempt >= maxAttempts || !isRetryableLlmError(error)) {
+        recordCircuitFailure(logPrefix);
         throw error;
       }
       await sleep(buildRetryDelayMs(attempt));
@@ -140,6 +189,7 @@ export async function requestSiliconFlowChatCompletion(
     }
   }
 
+  recordCircuitFailure(logPrefix);
   throw new Error("LLM Judge 重试耗尽。");
 }
 

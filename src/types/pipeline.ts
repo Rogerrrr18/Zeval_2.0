@@ -11,6 +11,7 @@ import type { EvalMetricRegistrySnapshot } from "@/types/eval-metric";
 import type { EvalTrace } from "@/types/eval-trace";
 import type { EvalCaseBundle } from "@/types/eval-case";
 import type { ExtendedMetricsBundle } from "@/types/extended-metrics";
+import type { EvaluationStageReport } from "@/types/evaluation-progress";
 
 /**
  * Supported upload formats for raw chatlog ingestion.
@@ -436,6 +437,11 @@ export type EvaluateResponse = {
   extendedMetrics?: ExtendedMetricsBundle;
   charts: ChartPayload[];
   suggestions: string[];
+  /**
+   * Final per-stage status snapshot. Lets the frontend programmatically detect
+   * which stage degraded/failed instead of string-matching `meta.warnings`.
+   */
+  stageStatuses: EvaluationStageReport[];
   /** Dynamic replay status. "skipped" when enableDynamicReplay=false. */
   dynamicReplayStatus: DynamicReplayStatus;
   /** Null when dynamicReplayStatus="skipped". */

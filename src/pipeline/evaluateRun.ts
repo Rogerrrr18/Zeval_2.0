@@ -35,7 +35,11 @@ import type {
 } from "@/types/pipeline";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { EvalTrace } from "@/types/eval-trace";
-import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
+import type {
+  EvaluationProgressEvent,
+  EvaluationStageKey,
+  EvaluationStageReport,
+} from "@/types/evaluation-progress";
 import type {
   KnowledgeRetentionFact,
   RetrievalContext,
@@ -92,6 +96,25 @@ export async function runEvaluatePipeline(
   const warnings: string[] = [];
   const judgeRequired = options.judgeRequired ?? options.useLlm;
   const enableDynamicReplay = options.enableDynamicReplay ?? false;
+
+  // Collect a final per-stage status snapshot (#5) so the response exposes
+  // structured stage health and the frontend never has to string-match
+  // `meta.warnings`. We wrap onProgress once: every stage helper already routes
+  // through it, so reassigning `options` here records every stage transition.
+  const stageReports = new Map<EvaluationStageKey, EvaluationStageReport>();
+  const callerOnProgress = options.onProgress;
+  options = {
+    ...options,
+    onProgress: (event) => {
+      stageReports.set(event.stage, {
+        stage: event.stage,
+        status: event.status,
+        message: event.message,
+        detail: event.detail,
+      });
+      callerOnProgress?.(event);
+    },
+  };
 
   if (!rawRows.every((row) => Boolean(row.timestamp))) {
     warnings.push("检测到缺失 timestamp，部分时序指标已降级。");
@@ -286,6 +309,7 @@ export async function runEvaluatePipeline(
     extendedMetrics,
     charts,
     suggestions,
+    stageStatuses: [...stageReports.values()],
     dynamicReplayStatus,
     intentMetrics,
     intentSequences,

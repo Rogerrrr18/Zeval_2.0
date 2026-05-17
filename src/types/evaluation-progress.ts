@@ -20,3 +20,16 @@ export type EvaluationProgressEvent = {
   detail?: string;
 };
 
+/**
+ * Final per-stage status snapshot returned in the evaluate response body.
+ *
+ * Lets the frontend programmatically detect which stage degraded or failed
+ * (e.g. `subjective` → "failed") instead of parsing free-text warning strings.
+ */
+export type EvaluationStageReport = {
+  stage: EvaluationStageKey;
+  status: EvaluationStageStatus;
+  message?: string;
+  detail?: string;
+};
+

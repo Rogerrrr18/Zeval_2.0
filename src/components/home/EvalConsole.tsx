@@ -197,6 +197,37 @@ async function readEvaluateStream(
 }
 
 /**
+ * Translate a raw backend evaluate error into actionable user-facing guidance.
+ *
+ * The evaluate API returns a bare 500 for several distinct AI-Judge failures.
+ * A generic "评估执行失败" leaves users unable to tell a transient outage from a
+ * config problem — this maps known backend signatures to specific advice.
+ *
+ * @param raw Raw error message from the API or stream.
+ * @returns Friendly, specific message.
+ */
+function humanizeEvaluateError(raw: string): string {
+  const message = raw.trim();
+  // Circuit breaker tripped — provider is down, the message already carries a wait hint.
+  if (/熔断/.test(message)) {
+    return `AI 评审服务暂时不可用：${message}`;
+  }
+  // judgeRequired=true hard contract — degraded scoring is intentionally refused.
+  if (/LLM Judge 是当前评估的强依赖|judgeRequired/.test(message)) {
+    return "AI 评审服务此次未能完成评分，系统已拒绝返回降级分数以避免存入错误数据。请稍后重试，或确认 AI Judge 服务可用。";
+  }
+  // Retries exhausted / provider HTTP error — transient, retry usually works.
+  if (/重试耗尽|SiliconFlow 请求失败|未返回有效内容|LLM 输出中未找到 JSON/.test(message)) {
+    return "AI 评审服务暂时不可用（多次重试后仍失败），通常为网络抖动或服务繁忙，请稍后重试。";
+  }
+  // API key misconfiguration — actionable for operators.
+  if (/API_KEY|未配置有效/.test(message)) {
+    return "AI 评审服务凭证未正确配置，请联系管理员检查 ZEVAL_JUDGE_API_KEY。";
+  }
+  return message || "评估执行失败，请稍后重试。";
+}
+
+/**
  * Render the main evaluation console.
  */
 export function EvalConsole() {
@@ -622,7 +653,8 @@ export function EvalConsole() {
       );
     } catch (requestError) {
       setRunState("error");
-      const message = requestError instanceof Error ? requestError.message : "评估执行失败";
+      const rawMessage = requestError instanceof Error ? requestError.message : "评估执行失败";
+      const message = humanizeEvaluateError(rawMessage);
       setError(message);
       setEvaluationStages((current) =>
         applyEvaluationProgressEvent(current, {

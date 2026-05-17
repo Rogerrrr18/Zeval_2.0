@@ -22,6 +22,7 @@ import { buildVersionedJudgeSystemPrompt } from "@/llm/judgeProfile";
 import type { EnrichedChatlogRow, IntentJudgeLabel, IntentRunLog, IntentSequenceDoc } from "@/types/pipeline";
 
 const DEFAULT_GLOBAL_MAX_TURNS = 120;
+const DEFAULT_SESSION_CONCURRENCY = 2;
 
 export type SimUserOptions = {
   agentApiEndpoint: string;
@@ -76,29 +77,60 @@ export async function runSimUserReplay(
   }
 
   const globalMax = resolveGlobalMax();
-  let globalTurnsUsed = 0;
+  const sessionConcurrency = resolveSessionConcurrency();
   const rowsBySession = groupRowsBySession(rows);
-  const allSessionLogs: IntentRunLog[][] = [];
 
-  for (const seqDoc of intentSequences) {
-    if (globalTurnsUsed >= globalMax) {
-      console.warn(`[simUser] Global turn budget G_max=${globalMax} exhausted, stopping replay.`);
-      break;
-    }
+  // Partition the global turn budget evenly so G_max stays a hard ceiling even
+  // when sessions run concurrently. The trade-off vs. the old serial loop: a
+  // parallel session can no longer borrow unused budget from an earlier
+  // under-budget session. Total turns ≤ perSessionBudget × N ≤ globalMax.
+  const perSessionBudget = Math.max(1, Math.floor(globalMax / intentSequences.length));
 
+  console.info(
+    `[simUser] replay sessions=${intentSequences.length} concurrency=${sessionConcurrency} perSessionBudget=${perSessionBudget} globalMax=${globalMax}`,
+  );
+
+  return mapWithConcurrency(intentSequences, sessionConcurrency, (seqDoc) => {
     const sessionRows = rowsBySession.get(seqDoc.sessionId) ?? [];
-    const sessionLogs = await replaySession(
-      seqDoc,
-      sessionRows,
-      options,
-      globalMax - globalTurnsUsed,
-    );
+    return replaySession(seqDoc, sessionRows, options, perSessionBudget);
+  });
+}
 
-    globalTurnsUsed += sessionLogs.length;
-    allSessionLogs.push(sessionLogs);
+/**
+ * Resolve the per-session replay concurrency.
+ * @returns Positive integer concurrency (env ZEVAL_SIMUSER_SESSION_CONCURRENCY).
+ */
+function resolveSessionConcurrency(): number {
+  const parsed = Number.parseInt(process.env.ZEVAL_SIMUSER_SESSION_CONCURRENCY ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_CONCURRENCY;
+}
+
+/**
+ * Map over items with a bounded number of workers, preserving input order.
+ * @param items Items to process.
+ * @param concurrency Maximum number of concurrent workers.
+ * @param worker Async worker invoked per item.
+ * @returns Results in the same order as `items`.
+ */
+async function mapWithConcurrency<TInput, TOutput>(
+  items: TInput[],
+  concurrency: number,
+  worker: (item: TInput, index: number) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const results = new Array<TOutput>(items.length);
+  let cursor = 0;
+  const laneCount = Math.max(1, Math.min(concurrency, items.length));
+
+  async function runLane(): Promise<void> {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
   }
 
-  return allSessionLogs;
+  await Promise.all(Array.from({ length: laneCount }, () => runLane()));
+  return results;
 }
 
 async function replaySession(

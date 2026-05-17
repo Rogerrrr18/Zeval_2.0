@@ -86,9 +86,6 @@ function traceVariant(status: RecoveryTraceResult["status"]): "Good" | "Bad" {
  * @returns Human-readable label.
  */
 function formatFailureType(failureType: RecoveryTraceResult["failureType"]): string {
-  if (failureType === "emotion-drop") {
-    return "情绪下探";
-  }
   if (failureType === "ignore") {
     return "问题被忽视";
   }

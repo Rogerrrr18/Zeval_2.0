@@ -5,11 +5,27 @@
 import { z } from "zod";
 
 /**
+ * Admission channel values mirroring {@link DatasetCaseSource}.
+ */
+export const datasetCaseSourceSchema = z.enum([
+  "auto_tp",
+  "manual_fp",
+  "auto_fn",
+  "auto_tn",
+  "auto_uncertainty",
+  "auto_disagreement",
+  "synthesized",
+  "imported",
+]);
+
+/**
  * Request body for creating one dataset case.
  */
 export const evalDatasetCreateCaseBodySchema = z.object({
   caseId: z.string().min(1).optional(),
   caseSetType: z.enum(["goodcase", "badcase"]),
+  /** Admission channel. Defaults to `auto_tp` when omitted. */
+  source: datasetCaseSourceSchema.optional(),
   sessionId: z.string().min(1),
   topicSegmentId: z.string().min(1),
   topicLabel: z.string().min(1),
@@ -44,6 +60,8 @@ export const evalDatasetCreateCaseBodySchema = z.object({
  */
 export const evalDatasetListCasesQuerySchema = z.object({
   caseSetType: z.enum(["goodcase", "badcase"]).optional(),
+  /** Filter by admission channel. */
+  source: datasetCaseSourceSchema.optional(),
 });
 
 /**

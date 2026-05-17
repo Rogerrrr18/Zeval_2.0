@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   response.meta.workspaceId = workspaceId;
 
   const projection = projectionApi.buildEvaluationProjection(response, {
-    workspaceId,
+    projectId: workspaceId,
     runId,
     useLlm: false,
   });

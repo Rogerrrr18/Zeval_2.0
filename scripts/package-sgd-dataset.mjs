@@ -9,7 +9,7 @@ import path from "node:path";
 /**
  * Parse simple --key value CLI arguments.
  * @param {string[]} argv CLI arguments.
- * @returns {{ source?: string; out?: string; limit?: string; files?: string; split?: string }}
+ * @returns {{ source?: string; out?: string; limit?: string; files?: string; split?: string; dialogues?: string }}
  */
 function parseArgs(argv) {
   const result = {};
@@ -97,7 +97,11 @@ async function main() {
   const split = args.split ?? path.basename(sourceDir);
   const fileNames = await resolveDialogueFiles(sourceDir, args.files, Number.isFinite(limit) ? limit : 1);
   const schema = await readJson(path.join(sourceDir, "schema.json"));
-  const dialogues = await collectDialogues(sourceDir, fileNames);
+  const dialogueLimit = Number(args.dialogues ?? "0");
+  const allDialogues = await collectDialogues(sourceDir, fileNames);
+  const dialogues = Number.isFinite(dialogueLimit) && dialogueLimit > 0
+    ? allDialogues.slice(0, dialogueLimit)
+    : allDialogues;
   const payload = {
     source: "dstc8-schema-guided-dialogue",
     split,

@@ -1,34 +1,20 @@
 /**
- * @fileoverview Build chart payloads from enriched rows and templates.
+ * @fileoverview Build chart payloads from enriched rows.
+ *
+ * P1 重构：已移除 emotionCurve 和 topicSwitchFrequency 图表。
+ * 当前保留两个纯行为统计图：dropoffDistribution 和 activeHourDistribution。
  */
 
 import { CHART_TEMPLATES } from "@/config/chartTemplates";
 import type { ChartPayload, EnrichedChatlogRow } from "@/types/pipeline";
 
 /**
- * Build P0 chart payloads from enriched rows.
+ * Build chart payloads from enriched rows.
  * @param rows Enriched rows.
  * @returns Chart payload array for frontend rendering.
  */
 export function buildChartPayloads(rows: EnrichedChatlogRow[]): ChartPayload[] {
   return CHART_TEMPLATES.map((template) => {
-    if (template.chartKey === "emotionCurve") {
-      return {
-        chartKey: template.chartKey,
-        title: template.title,
-        description: "按会话与轮次呈现 100 分制情绪分，用于判断波动、恢复与 segment 质量。",
-        chartType: template.chartType,
-        xField: template.schema.xField,
-        yField: template.schema.yField,
-        seriesField: template.schema.seriesField,
-        data: rows.map((row) => ({
-          sessionId: row.sessionId,
-          turnIndex: row.turnIndex,
-          emotionScore: row.emotionScore,
-        })),
-      };
-    }
-
     if (template.chartKey === "dropoffDistribution") {
       const distribution = rows
         .filter((row) => row.isDropoffTurn)
@@ -60,41 +46,27 @@ export function buildChartPayloads(rows: EnrichedChatlogRow[]): ChartPayload[] {
       return {
         chartKey: template.chartKey,
         title: template.title,
-        description: "查看不同时段与角色消息量，判断交互发生高峰。",
+        description: "展示用户活跃时段分布，区分 user/assistant 角色消息量。",
         chartType: template.chartType,
         xField: template.schema.xField,
         yField: template.schema.yField,
         seriesField: template.schema.seriesField,
         data: Object.entries(distribution).map(([key, messageCount]) => {
           const [activeHour, role] = key.split("_");
-          return {
-            activeHour,
-            role,
-            messageCount,
-          };
+          return { activeHour: activeHour === "unknown" ? null : Number(activeHour), role, messageCount };
         }),
       };
     }
 
-    const sessionDistribution = rows
-      .filter((row) => row.isTopicSwitch)
-      .reduce<Record<string, number>>((acc, row) => {
-        acc[row.sessionId] = (acc[row.sessionId] ?? 0) + 1;
-        return acc;
-      }, {});
-    const sessionIds = [...new Set(rows.map((row) => row.sessionId))];
-
+    // Fallback for any unrecognized template
     return {
       chartKey: template.chartKey,
       title: template.title,
-      description: "统计每个会话中的话题跳转次数，判断对话连贯度。",
+      description: "",
       chartType: template.chartType,
       xField: template.schema.xField,
       yField: template.schema.yField,
-      data: sessionIds.map((sessionId) => ({
-        sessionId,
-        topicSwitchCount: sessionDistribution[sessionId] ?? 0,
-      })),
+      data: [],
     };
   });
 }

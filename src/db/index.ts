@@ -1,12 +1,12 @@
 /**
- * @fileoverview Minimal database abstraction for the post-MVP storage migration.
+ * @fileoverview Minimal database abstraction for the P1 typed-record storage layer.
+ *
+ * P1 重构：移除 workspaceId（旧命名），改用 projectId（uuid string）。
  */
 
 export type DbRecord = {
   id: string;
-  organizationId?: string;
-  projectId?: string;
-  workspaceId: string;
+  projectId: string;
   type: string;
   payload: unknown;
   createdAt: string;
@@ -14,14 +14,13 @@ export type DbRecord = {
 };
 
 export type DbDataScope = {
-  organizationId?: string;
   projectId?: string;
 };
 
 export interface ZeroreDatabase {
   upsert(record: DbRecord): Promise<void>;
-  get(workspaceId: string, type: string, id: string, scope?: DbDataScope): Promise<DbRecord | null>;
-  list(workspaceId: string, type: string, scope?: DbDataScope): Promise<DbRecord[]>;
+  get(projectId: string, type: string, id: string): Promise<DbRecord | null>;
+  list(projectId: string, type: string): Promise<DbRecord[]>;
 }
 
 export type ZeroreDatabaseAdapter = "local-json" | "postgres";

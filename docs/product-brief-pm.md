@@ -635,13 +635,16 @@ if dropoff occurs and previous row emotionScore <= 40:
 
 ## 14. 下一阶段建议
 
-如果进入下一阶段，最建议优先补的不是“更多功能”，而是“更强准确性和更高泛化能力”：
+如果进入下一阶段，最建议优先补的不是"更多功能"，而是"更强准确性和更高泛化能力"，并把产品定位从"对话质量评估工具"升级到"Agent 优化决策系统"：
 
 1. 让信号层与建议生成的联动更细
 2. 增加更多跨场景的指标模板
 3. 让情绪评分函数参数可配置
 4. 提升 topic 切分和主观证据模板的稳定性
 5. 增加批量评估、复核与对比能力
+6. **评测集按能力维度切片**：每条 case 显式标 `capabilityDimension`（多轮一致性 / 工具调用正确性 / 知识忠实度等 12 个白名单）+ `failureLayer`（Canonical Agent Harness 的 9 层 L0-L8）。详见 `Zeval 重构方案/重构方案梳理/15-能力维度评测与归因.md`。
+7. **故障层归因**：Copilot 给出的优化建议必须能定位到"该改模型 / prompt / retrieval / tool schema / memory / state ..."的具体层，不再笼统"调 prompt"。
+8. **候选实验路由**：让用户跑"同一组 eval cases × 候选维度矩阵（model × temperature × prompt × tool schema）"的对照实验，由系统推荐性价比最高的组合。
 
 ## 15. PM 视角总结
 
@@ -649,7 +652,18 @@ if dropoff occurs and previous row emotionScore <= 40:
 
 - 原始长对话可以被自动转成结构化评估对象
 - 不同主题、不同情绪阶段可以被切分并单独评估
-- 系统不仅能看“表层统计”，还能看“情绪走势”和“潜在风险”
+- 系统不仅能看"表层统计"，还能看"情绪走势"和"潜在风险"
 - 结果具备一定可解释性，可以支持产品讨论、策略迭代和后续业务验证
 
 因此，当前方案已经适合作为第一阶段对外演示、内部评审和下一轮需求收敛的基础版本。
+
+## 16. 产品定位升级（重构目标）
+
+当前 MVP 是"**对话质量评估工具**"。重构目标是"**Agent 优化决策系统**"——能告诉用户"该改模型还是改 harness 哪一层"。市面上做 eval 的工具不少，但能给出"先改什么、再改什么、性价比多少"决策建议的几乎没有，这是 Zeval 的差异化点。
+
+升级靠四块：
+
+1. **数据立方体**：每条评测 case 落到 `(capabilityDimension × source × failureLayer)` 三元组（详见 `Zeval 重构方案/重构方案梳理/15-能力维度评测与归因.md`）。
+2. **9 层 Canonical Harness**：L0 Model / L1 Input / L2 Planning / L3 Memory / L4 Retrieval / L5 Tool Selection / L6 Tool Execution / L7 State / L8 Generation——收敛自 Claude Agent SDK / LangGraph / OpenAI Assistants / Agentic RAG。
+3. **能力 ↔ 层归因矩阵**：12 个能力维度各有"主因层 + 次因层"映射，是 Copilot 做归因建议的基石。
+4. **Copilot 决策 skills**：`diagnose_capability_gap` / `compose_eval_dataset_for_capability` / `attribute_failure_to_layer` / `suggest_optimization_path` 四个新 skill，把用户痛点直达优化路径推荐。

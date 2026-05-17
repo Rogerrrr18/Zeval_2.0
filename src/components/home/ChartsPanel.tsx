@@ -17,6 +17,8 @@ import {
 import type { ChartPayload } from "@/types/pipeline";
 import styles from "./evalConsole.module.css";
 
+const MAX_RENDERED_SERIES = 8;
+
 /**
  * Render chart cards or an empty state.
  * @param props Chart panel props.
@@ -49,7 +51,10 @@ export function ChartsPanel(props: { charts: ChartPayload[] }) {
  */
 function ChartRenderer(props: { chart: ChartPayload }) {
   const { chart } = props;
-  const data = chart.seriesField ? pivotSeriesData(chart) : chart.data;
+  const rawSeriesKeys = chart.seriesField ? collectSeriesKeys(chart) : [chart.yField];
+  const seriesKeys = rawSeriesKeys.slice(0, MAX_RENDERED_SERIES);
+  const hiddenSeriesCount = Math.max(0, rawSeriesKeys.length - seriesKeys.length);
+  const data = chart.seriesField ? pivotSeriesData(chart, seriesKeys) : chart.data;
   const isEmotionChart = chart.chartKey.toLowerCase().includes("emotion");
   const containerProps = {
     width: "100%" as const,
@@ -59,8 +64,13 @@ function ChartRenderer(props: { chart: ChartPayload }) {
   };
 
   if (chart.chartType === "line") {
-    const seriesKeys = chart.seriesField ? collectSeriesKeys(chart) : [chart.yField];
     return (
+      <div className={styles.chartRenderStack}>
+        {hiddenSeriesCount > 0 ? (
+          <div className={styles.chartSampleNotice}>
+            图表显示前 {seriesKeys.length} 个会话，另有 {hiddenSeriesCount} 个会话已隐藏以避免图例溢出；完整数据仍保留在评估结果 JSON。
+          </div>
+        ) : null}
       <ResponsiveContainer {...containerProps}>
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#243041" vertical={false} />
@@ -80,7 +90,7 @@ function ChartRenderer(props: { chart: ChartPayload }) {
             }}
             labelStyle={{ color: "#f8fafc" }}
           />
-          {chart.seriesField ? <Legend wrapperStyle={{ color: "#9fb0c9" }} /> : null}
+          {chart.seriesField && seriesKeys.length <= 4 ? <Legend wrapperStyle={{ color: "#9fb0c9" }} /> : null}
           {seriesKeys.map((seriesKey, index) => (
             <Line
               key={seriesKey}
@@ -94,11 +104,17 @@ function ChartRenderer(props: { chart: ChartPayload }) {
           ))}
         </LineChart>
       </ResponsiveContainer>
+      </div>
     );
   }
 
-  const seriesKeys = chart.seriesField ? collectSeriesKeys(chart) : [chart.yField];
   return (
+    <div className={styles.chartRenderStack}>
+      {hiddenSeriesCount > 0 ? (
+        <div className={styles.chartSampleNotice}>
+          图表显示前 {seriesKeys.length} 个系列，另有 {hiddenSeriesCount} 个系列已隐藏；完整数据仍保留在评估结果 JSON。
+        </div>
+      ) : null}
     <ResponsiveContainer {...containerProps}>
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#243041" vertical={false} />
@@ -113,7 +129,7 @@ function ChartRenderer(props: { chart: ChartPayload }) {
           }}
           labelStyle={{ color: "#f8fafc" }}
         />
-        {chart.seriesField ? <Legend wrapperStyle={{ color: "#9fb0c9" }} /> : null}
+        {chart.seriesField && seriesKeys.length <= 4 ? <Legend wrapperStyle={{ color: "#9fb0c9" }} /> : null}
         {seriesKeys.map((seriesKey, index) => (
           <Bar
             key={seriesKey}
@@ -124,6 +140,7 @@ function ChartRenderer(props: { chart: ChartPayload }) {
         ))}
       </BarChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -132,15 +149,22 @@ function ChartRenderer(props: { chart: ChartPayload }) {
  * @param chart Chart payload.
  * @returns Pivoted chart data.
  */
-function pivotSeriesData(chart: ChartPayload): Array<Record<string, string | number | boolean | null>> {
+function pivotSeriesData(
+  chart: ChartPayload,
+  allowedSeriesKeys?: string[],
+): Array<Record<string, string | number | boolean | null>> {
   if (!chart.seriesField) {
     return chart.data;
   }
 
+  const allowedSeries = allowedSeriesKeys ? new Set(allowedSeriesKeys) : null;
   const map = new Map<string, Record<string, string | number | boolean | null>>();
   chart.data.forEach((row) => {
     const xValue = String(row[chart.xField]);
     const seriesValue = String(row[chart.seriesField ?? "series"]);
+    if (allowedSeries && !allowedSeries.has(seriesValue)) {
+      return;
+    }
     if (!map.has(xValue)) {
       map.set(xValue, { [chart.xField]: row[chart.xField] });
     }

@@ -55,16 +55,13 @@ export function projectEvaluateTrendPoint(
   evaluate: EvaluateResponse,
   meta: { createdAt: string; label?: string },
 ): EvaluateRunTrendPoint {
-  const emotionCurve = evaluate.subjectiveMetrics.emotionCurve;
   const goalRows = evaluate.subjectiveMetrics.goalCompletions;
   const achieved = goalRows.filter((item) => item.status === "achieved").length;
   return {
     runId: evaluate.runId,
     createdAt: meta.createdAt,
     label: meta.label,
-    emotionScore: emotionCurve.length
-      ? Number((emotionCurve.reduce((sum, item) => sum + item.emotionScore, 0) / emotionCurve.length).toFixed(2))
-      : null,
+    emotionScore: null,
     goalCompletionRate: goalRows.length ? Number(((achieved / goalRows.length) * 100).toFixed(1)) : null,
     badCaseCount: evaluate.badCaseAssets.length,
     businessKpiScore: evaluate.scenarioEvaluation

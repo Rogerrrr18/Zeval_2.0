@@ -18,6 +18,7 @@ import styles from "./onlineEval.module.css";
 
 const LAST_CUSTOMER_ID_KEY = "zeval:lastCustomerId";
 const LEGACY_LAST_CUSTOMER_ID_KEY = "zerore:lastCustomerId";
+const MOCK_REPLY_API_BASE_URL = "mock://customer-demo";
 
 type BaselineIndexRow = {
   runId: string;
@@ -68,7 +69,7 @@ export function OnlineEvalConsole() {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedSampleBatchId, setSelectedSampleBatchId] = useState("");
   const [sourceMode, setSourceMode] = useState<"baseline" | "sampleBatch">("baseline");
-  const [replyApiBaseUrl, setReplyApiBaseUrl] = useState("");
+  const [replyApiBaseUrl, setReplyApiBaseUrl] = useState(MOCK_REPLY_API_BASE_URL);
   const [loading, setLoading] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [error, setError] = useState("");
@@ -238,7 +239,7 @@ export function OnlineEvalConsole() {
 
               <section className={styles.panel}>
                 <h2>样本来源</h2>
-                <p>选择 baseline 或 sample batch；如还没保存基线，先去「工作台 · 第 4 步」保存一份。</p>
+                <p>选择 baseline 或 sample batch；如还没保存基线，可在工作台「修复交付」里的结果归档区保存。</p>
                 <div className={styles.modeSwitch}>
                   <button
                     type="button"
@@ -357,7 +358,7 @@ export function OnlineEvalConsole() {
                 </p>
                 <div className={styles.howTo}>
                   <span className={styles.howToTitle}>怎么用</span>
-                  <span>① 填新版本回复 API 基址（POST /reply）。</span>
+                  <span>① 填新版本回复 API 基址（POST /reply）；内置 mock 默认不依赖本地端口。</span>
                   <span>② 点「执行回放评估」，跑完会自动跳到「看对比」。</span>
                 </div>
               </section>
@@ -374,12 +375,12 @@ export function OnlineEvalConsole() {
                 </p>
                 <div className={styles.formGrid}>
                   <label className={styles.label}>
-                    客户回复 API 基址（可选）
+                    客户回复 API 基址
                     <input
                       className={styles.input}
                       value={replyApiBaseUrl}
                       onChange={(event) => setReplyApiBaseUrl(event.target.value)}
-                      placeholder="例如：https://your-domain/api"
+                      placeholder={MOCK_REPLY_API_BASE_URL}
                     />
                   </label>
                 </div>

@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const parsedQuery = evalDatasetListCasesQuerySchema.safeParse({
       caseSetType: url.searchParams.get("caseSetType") || undefined,
+      source: url.searchParams.get("source") || undefined,
     });
     if (!parsedQuery.success) {
       return NextResponse.json({ error: "查询参数不合法。", details: parsedQuery.error.flatten() }, { status: 400 });
@@ -22,7 +23,10 @@ export async function GET(request: Request) {
 
     const context = getZeroreRequestContext(request);
     const store = createDatasetStore({ workspaceId: context.workspaceId });
-    const cases = await store.listCases(parsedQuery.data.caseSetType);
+    const allCases = await store.listCases(parsedQuery.data.caseSetType);
+    const cases = parsedQuery.data.source
+      ? allCases.filter((c) => c.source === parsedQuery.data.source)
+      : allCases;
     return NextResponse.json({ cases, count: cases.length });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -78,6 +82,7 @@ export async function POST(request: Request) {
     const record: DatasetCaseRecord = {
       caseId,
       caseSetType: body.caseSetType,
+      source: body.source ?? (body.caseSetType === "goodcase" ? "auto_tn" : "auto_tp"),
       sessionId: body.sessionId,
       topicSegmentId: body.topicSegmentId,
       topicLabel: body.topicLabel,

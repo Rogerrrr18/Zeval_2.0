@@ -5,6 +5,7 @@
 import { createZeroreDatabase } from "@/db";
 import { buildEvaluationProjection, persistEvaluationProjection } from "@/db/evaluation-projection";
 import { redactRawRows } from "@/pii/redaction";
+import { persistEvaluateResult } from "@/persistence/evaluateResultStore";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
 import { createRemediationPackageStore } from "@/remediation";
 import { evaluateRequestSchema } from "@/schemas/api";
@@ -37,9 +38,11 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   const redaction = redactRawRows(body.rawRows);
   const rawRows = redaction.rows;
   const runId = body.runId ?? `run_${Date.now()}`;
-  const useLlm = Boolean(body.useLlm);
+  const useLlm = body.useLlm ?? true;
+  const judgeRequired = body.judgeRequired ?? true;
   const response = await runEvaluatePipeline(rawRows, {
     useLlm,
+    judgeRequired,
     runId,
     scenarioId: body.scenarioId,
     scenarioContext: body.scenarioContext
@@ -60,19 +63,19 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   response.meta.piiRedaction = redaction.report;
 
   const projection = buildEvaluationProjection(response, {
-    organizationId: job.organizationId,
-    projectId: job.projectId,
-    workspaceId: job.workspaceId,
+    projectId: job.projectId ?? job.workspaceId,
     runId,
     useLlm,
   });
   const database = await createZeroreDatabase();
   await persistEvaluationProjection(database, projection);
+  const savedEvaluatePath = await persistEvaluateResult(response);
 
   return {
     runId,
     warnings: response.meta.warnings,
     artifactPath: response.artifactPath ?? null,
+    savedEvaluatePath,
     projectionRecords: projection.dbRecords.length,
     summaryCards: response.summaryCards,
     badCaseCount: response.badCaseAssets.length,

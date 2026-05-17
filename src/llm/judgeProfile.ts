@@ -6,8 +6,9 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export type ZevalJudgePromptStage =
-  | "topic_continuity_review"
-  | "segment_emotion_baseline"
+  | "intent_sequence_extract"
+  | "simuser_query_generate"
+  | "intent_completion_judge"
   | "subjective_dimension_judge"
   | "goal_completion_judge"
   | "recovery_trace_strategy"
@@ -34,19 +35,22 @@ export type ZevalJudgeProfileSnapshot = {
   gate: ZevalJudgeGateConfig;
 };
 
-export const ZEVAL_JUDGE_PROFILE_VERSION = "zeval-judge-v1.0.0";
+export const ZEVAL_JUDGE_PROFILE_VERSION = "zeval-judge-v2.0.0";
+export const ZEVAL_INTENT_EXTRACT_TEMPERATURE = 0.3;
+export const ZEVAL_INTENT_EXTRACT_SEED = 42;
 export const ZEVAL_JUDGE_DEFAULT_MODEL = "Qwen/Qwen3.5-27B";
 export const ZEVAL_JUDGE_TEMPERATURE = 0.2;
 export const ZEVAL_JUDGE_TOP_P = 0.7;
 export const ZEVAL_JUDGE_MAX_TOKENS = 1200;
 
 export const ZEVAL_JUDGE_PROMPT_VERSIONS: Record<ZevalJudgePromptStage, string> = {
-  topic_continuity_review: "topic-continuity-v1.0.0",
-  segment_emotion_baseline: "segment-emotion-baseline-v1.0.0",
-  subjective_dimension_judge: "subjective-dimension-v1.0.0",
-  goal_completion_judge: "goal-completion-v1.0.0",
-  recovery_trace_strategy: "recovery-trace-strategy-v1.0.0",
-  extended_metric_judge: "extended-metric-v1.0.0",
+  intent_sequence_extract: "intent-sequence-extract-v2.0.0",
+  simuser_query_generate: "simuser-query-generate-v2.0.0",
+  intent_completion_judge: "intent-completion-judge-v2.0.0",
+  subjective_dimension_judge: "subjective-dimension-v2.0.0",
+  goal_completion_judge: "goal-completion-v2.0.0",
+  recovery_trace_strategy: "recovery-trace-strategy-v2.0.0",
+  extended_metric_judge: "extended-metric-v2.0.0",
 };
 
 export const ZEVAL_JUDGE_GATE_CONFIG: ZevalJudgeGateConfig = {
@@ -152,8 +156,9 @@ export function getPromptVersionForRequestStage(stage: string): string | null {
  */
 function isZevalJudgePromptStage(value: string): value is ZevalJudgePromptStage {
   return (
-    value === "topic_continuity_review" ||
-    value === "segment_emotion_baseline" ||
+    value === "intent_sequence_extract" ||
+    value === "simuser_query_generate" ||
+    value === "intent_completion_judge" ||
     value === "subjective_dimension_judge" ||
     value === "goal_completion_judge" ||
     value === "recovery_trace_strategy" ||

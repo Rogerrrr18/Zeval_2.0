@@ -27,7 +27,7 @@ const server = http.createServer(async (request, response) => {
   return writeJson(response, 404, { error: "Not found" });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`[mock-customer-api] customer-demo-api listening on http://127.0.0.1:${PORT}`);
 });
 
@@ -39,6 +39,12 @@ server.listen(PORT, () => {
  */
 function buildMockReply(userQuery, messages) {
   const latestContent = userQuery || String(messages[messages.length - 1]?.content || "");
+  if (/退款|订单|到账/.test(latestContent)) {
+    return "已帮您提交退款申请，订单将在 1 到 3 个工作日原路退回；我也会把处理进度同步给您。";
+  }
+  if (/下一步|怎么办|进度/.test(latestContent)) {
+    return "已为您处理好了：退款申请已经提交，您接下来只需要等待到账通知；如果 3 个工作日未到账，我会继续为您跟进。";
+  }
   if (/焦虑|害怕|难受|委屈/.test(latestContent)) {
     return "我先接住你的感受。你现在最想解决的，是情绪本身，还是下一步怎么回应对方？";
   }

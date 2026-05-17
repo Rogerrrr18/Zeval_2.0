@@ -69,8 +69,6 @@ function buildEvalCases(rows: EnrichedChatlogRow[], trace?: EvalTrace): EvalCase
         role: row.role,
         content: row.content,
         timestamp: row.timestamp,
-        topic: row.topic,
-        emotionScore: row.emotionScore,
       })),
       toolsCalled,
       expectedTools: [],

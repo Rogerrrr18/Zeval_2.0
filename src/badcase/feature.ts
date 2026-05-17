@@ -42,20 +42,15 @@ export function buildBadCaseFeatureSnapshot(
     .map((row) => row.responseGapSec)
     .filter((gap): gap is number => typeof gap === "number");
   const repeatedQuestions = findRepeatedQuestionCount(userRows.map((row) => row.content));
-  const lowEmotionCount = sessionRows.filter((row) => row.emotionScore <= 40).length;
   const avgGap = gapRows.length > 0 ? gapRows.reduce((sum, gap) => sum + gap, 0) / gapRows.length : 0;
-  const sessionTopicSwitches = new Set(sessionRows.map((row) => row.topicSegmentId)).size - 1;
+  const sessionTopicSwitches = 0;
   const goalCompletion = evaluate.subjectiveMetrics.goalCompletions.find((item) => item.sessionId === asset.sessionId);
   const recoveryTrace = evaluate.subjectiveMetrics.recoveryTraces.find((item) => item.sessionId === asset.sessionId);
   const understandingSignal =
     evaluate.subjectiveMetrics.signals.find(
       (item) => item.signalKey === "understandingBarrierRisk" && item.evidenceTurnRange.startsWith(`${asset.sessionId}:`),
     )?.score ?? 0;
-  const recoverySignal =
-    evaluate.subjectiveMetrics.signals.find(
-      (item) =>
-        item.signalKey === "emotionRecoveryFailureRisk" && item.evidenceTurnRange.startsWith(`${asset.sessionId}:`),
-    )?.score ?? 0;
+  const recoverySignal = 0;
   const empathyScore =
     evaluate.subjectiveMetrics.dimensions.find((item) => item.dimension === "共情程度")?.score ?? 3;
   const offTopicScore =
@@ -67,7 +62,7 @@ export function buildBadCaseFeatureSnapshot(
   const metricValues = new Map<string, number>([
     ["severity_score", asset.severityScore],
     ["turn_count_norm", clamp01(sessionRows.length / 20)],
-    ["low_emotion_rate", sessionRows.length > 0 ? clamp01(lowEmotionCount / sessionRows.length) : 0],
+    ["low_emotion_rate", 0],
     ["avg_response_gap_norm", clamp01(avgGap / 120)],
     ["topic_switch_rate_norm", clamp01(Math.max(0, sessionTopicSwitches) / 3)],
     ["question_repeat_risk", clamp01(repeatedQuestions / Math.max(1, userRows.length))],

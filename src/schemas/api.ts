@@ -157,4 +157,15 @@ export const evaluateRequestSchema = z.object({
   structuredTaskMetrics: structuredTaskMetricsSchema.optional(),
   trace: traceSchema.optional(),
   extendedInputs: extendedInputsSchema.optional(),
+  /**
+   * Enable SimUser intent pointer dynamic replay.
+   * When false (default), intent extraction and replay are skipped.
+   * dynamicReplayStatus will be "skipped" and intentMetrics/intentSequences/intentRunLogs will be null.
+   */
+  enableDynamicReplay: z.boolean().optional().default(false),
+  /**
+   * Agent HTTP endpoint for SimUser to call during dynamic replay.
+   * Required when enableDynamicReplay=true. POST { messages: [...] } → { content: string }.
+   */
+  agentApiEndpoint: z.string().url().optional(),
 });

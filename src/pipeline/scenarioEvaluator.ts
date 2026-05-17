@@ -183,15 +183,6 @@ function resolveObjectiveMetric(
     };
   }
 
-  if (metricId === "topicSwitchRate") {
-    return {
-      metricId,
-      source: "objective",
-      rawValue: clamp01(objectiveMetrics.topicSwitchRate / 3),
-      evidence: `平均 topic 切换 ${objectiveMetrics.topicSwitchRate.toFixed(2)} 次/会话，切换越多越容易削弱处理效率。`,
-    };
-  }
-
   return {
     metricId,
     source: "objective",

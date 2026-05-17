@@ -37,6 +37,10 @@ type SiliconFlowLogContext = {
   runId?: string;
   sessionId?: string;
   segmentId?: string;
+  /** Override default judge temperature for deterministic extraction stages. */
+  temperature?: number;
+  /** Optional seed for deterministic outputs (intent extraction, etc.). */
+  seed?: number;
 };
 
 /**
@@ -75,13 +79,16 @@ export async function requestSiliconFlowChatCompletion(
         model,
         messages,
         stream: false,
-        temperature: ZEVAL_JUDGE_TEMPERATURE,
+        temperature: context.temperature ?? ZEVAL_JUDGE_TEMPERATURE,
         top_p: ZEVAL_JUDGE_TOP_P,
         max_tokens: ZEVAL_JUDGE_MAX_TOKENS,
         response_format: {
           type: "json_object",
         },
       };
+      if (typeof context.seed === "number") {
+        requestBody.seed = context.seed;
+      }
       const enableThinking = resolveOptionalBoolean(
         process.env.ZEVAL_JUDGE_ENABLE_THINKING ??
           process.env.ZEVAL_LLM_ENABLE_THINKING ??
@@ -333,16 +340,25 @@ function resolvePositiveInteger(value: string | undefined, fallback: number): nu
 
 /**
  * Decide whether one LLM error is transient enough to retry.
+ *
+ * JSON parse failures (SyntaxError / "未找到 JSON 对象") are included because
+ * SiliconFlow occasionally truncates its response under high concurrency — a
+ * simple retry typically succeeds without any change to the prompt.
+ *
  * @param error Error thrown by fetch or provider validation.
  * @returns Whether the request should be retried.
  */
 function isRetryableLlmError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    /abort|timeout|timed out|fetch failed|network/i.test(message) ||
-    /SiliconFlow 请求失败: (408|409|425|429|5\d\d)/.test(message) ||
-    /非 JSON 响应: (408|409|425|429|5\d\d)/.test(message)
-  );
+  // Network / timeout errors
+  if (/abort|timeout|timed out|fetch failed|network/i.test(message)) return true;
+  // Provider HTTP 4xx/5xx that signal transient overload
+  if (/SiliconFlow 请求失败: (408|409|425|429|5\d\d)/.test(message)) return true;
+  if (/非 JSON 响应: (408|409|425|429|5\d\d)/.test(message)) return true;
+  // JSON parse failures — usually caused by truncated responses under high load
+  if (error instanceof SyntaxError) return true;
+  if (/LLM 输出中未找到 JSON 对象/.test(message)) return true;
+  return false;
 }
 
 /**

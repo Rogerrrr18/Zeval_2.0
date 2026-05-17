@@ -10,6 +10,30 @@ import type { BadCaseFeatureSnapshot } from "@/badcase/types";
 export type CaseSetType = "goodcase" | "badcase";
 
 /**
+ * How a dataset case entered the pool.
+ *
+ * - `auto_tp`           : Rule / subjective judge both flagged bad (true positive).
+ * - `manual_fp`         : System flagged bad, human review confirmed OK; stored as a goodcase control sample (false positive override).
+ * - `auto_fn`           : System judged OK but downstream behavioural signals (dropoff, repeated questions, negative tail) indicate a real problem (false negative harvest).
+ * - `auto_tn`           : Stratified-sampled high-quality session used as a golden positive baseline.
+ * - `auto_uncertainty`  : Judge confidence ∈ [0.4, 0.6]; high-information boundary case pending human review.
+ * - `auto_disagreement` : Rule verdict and LLM judge verdict disagree; surfaces evaluator reliability gaps.
+ * - `synthesized`       : LLM-assisted synthetic sample. Must NOT feed into baseline or online eval statistics.
+ * - `imported`          : Batch-imported from an external system.
+ *
+ * Legacy values `auto_admission` and `manual` are mapped to `auto_tp` and `imported` respectively during reads.
+ */
+export type DatasetCaseSource =
+  | "auto_tp"
+  | "manual_fp"
+  | "auto_fn"
+  | "auto_tn"
+  | "auto_uncertainty"
+  | "auto_disagreement"
+  | "synthesized"
+  | "imported";
+
+/**
  * Lightweight human review verdict for auto-captured cases.
  */
 export type DatasetCaseHumanVerdict = "valid_bad_case" | "false_positive" | "unclear";
@@ -30,6 +54,8 @@ export type DatasetCaseReviewStatus =
 export type DatasetCaseRecord = {
   caseId: string;
   caseSetType: CaseSetType;
+  /** Admission channel that produced this case. See {@link DatasetCaseSource}. */
+  source?: DatasetCaseSource;
   sessionId: string;
   topicSegmentId: string;
   topicIndex?: number;

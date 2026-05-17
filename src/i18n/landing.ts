@@ -27,11 +27,6 @@ export type LandingIntegration = {
   code: string;
 };
 
-export type LandingTestimonial = {
-  quote: string;
-  author: string;
-};
-
 export type LandingFaqItem = {
   question: string;
   answer: string;
@@ -42,19 +37,37 @@ export type LandingHeroStat = {
   value: string;
 };
 
+export type LandingFooterColumn = {
+  title: string;
+  links: { label: string; href: string }[];
+};
+
 export type LandingCopy = {
   nav: { label: string; href: string }[];
   ctaPrimary: string;
   ctaSecondary: string;
-  ctaLogin: string;
+  ctaTertiary: string;
   langSwitch: { label: string; switchTo: string };
-  trustHeader: string;
-  trustLogos: string[];
   hero: {
     eyebrow: string;
-    headline: { line1: string; line2Pre: string; accent: string; line2Post: string };
-    lead: { intro: string; bold: string; outro: string };
+    headline: string;
+    lead: string;
     stats: LandingHeroStat[];
+    previewLabel: string;
+    preview: {
+      ingestLabel: string;
+      ingestTitle: string;
+      ingestText: string;
+      formats: string[];
+      scoreLabel: string;
+      score: string;
+      scoreText: string;
+      traceLabel: string;
+      trace: string[];
+      packageLabel: string;
+      packageTitle: string;
+      packageText: string;
+    };
   };
   capabilitiesSection: { eyebrow: string; title: string; lead: string };
   capabilities: LandingCapability[];
@@ -64,18 +77,12 @@ export type LandingCopy = {
   integrations: LandingIntegration[];
   outcomesSection: { eyebrow: string; title: string };
   outcomes: LandingOutcome[];
-  testimonialsSection: { eyebrow: string; title: string };
-  testimonials: LandingTestimonial[];
   faqSection: { eyebrow: string; title: string };
   faq: LandingFaqItem[];
   cta: { eyebrow: string; title: string; lead: string };
   footer: {
     tagline: string;
-    columns: {
-      product: { title: string; links: { label: string; href: string }[] };
-      resources: { title: string; links: { label: string; href: string }[] };
-      company: { title: string; links: { label: string; href: string }[] };
-    };
+    columns: LandingFooterColumn[];
     copyright: (year: number) => string;
     builtFor: string;
   };
@@ -83,419 +90,371 @@ export type LandingCopy = {
 
 const ZH: LandingCopy = {
   nav: [
-    { label: "Docs", href: "/docs" },
-    { label: "Pricing", href: "/pricing" },
-    { label: "Blog", href: "/blog" },
-    { label: "About", href: "/about" },
+    { label: "工作台", href: "/workbench" },
+    { label: "接入方式", href: "#integration" },
+    { label: "案例池", href: "/datasets" },
+    { label: "调优包", href: "/remediation-packages" },
+    { label: "在线评测", href: "/online-eval" },
   ],
-  ctaPrimary: "联系我们",
-  ctaSecondary: "进入工作台",
-  ctaLogin: "登录",
+  ctaPrimary: "打开工作台",
+  ctaSecondary: "查看在线评测",
+  ctaTertiary: "查看调优包",
   langSwitch: { label: "中", switchTo: "EN" },
-  trustHeader: "正在服务的 Agent 产品类型",
-  trustLogos: [
-    "AI Team · ToB 客服",
-    "AI Team · 情绪陪伴",
-    "AI Team · 电商客服",
-    "AI Team · 内网 IT",
-    "AI Team · 教研助手",
-  ],
   hero: {
-    eyebrow: "AI Quality Loop · For Agent Products",
-    headline: {
-      line1: "每一次失败对话，",
-      line2Pre: "都是下一次发版前的",
-      accent: "测试",
-      line2Post: "。",
-    },
-    lead: {
-      intro: "Zeval 不是再做一个 eval dashboard。它把真实 bad case 自动编译为",
-      bold: " 证据、调优包和回归验证",
-      outro: "，让 AI 产品的每次失败都进入下一次发版前的质量闭环。",
-    },
+    eyebrow: "AI Conversation Quality Loop",
+    headline: "把 AI 对话失败，变成下一次发版前的回归测试。",
+    lead:
+      "Zeval 接收 CSV / JSON / TXT / MD 对话日志，自动完成解析、评估、证据提取、bad case 归档、调优包生成和回放验证。它不是单纯看分数的 dashboard，而是一条能让产品和工程一起修问题的质量闭环。",
     stats: [
-      { label: "核心闭环", value: "发现 → 证据 → 调优包 → 回放" },
-      { label: "当前接入", value: "CSV · JSON · TXT · MD" },
-      { label: "判定策略", value: "规则优先 · LLM 兜底" },
-      { label: "治理层", value: "κ 一致性 · drift 检测" },
+      { label: "输入", value: "CSV / JSON / TXT / MD" },
+      { label: "评估", value: "客观指标 + LLM Judge" },
+      { label: "输出", value: "图表 / 证据 / 建议 / bad case" },
+      { label: "闭环", value: "baseline + package + replay" },
     ],
+    previewLabel: "Zeval product preview",
+    preview: {
+      ingestLabel: "INGEST",
+      ingestTitle: "chatlog upload",
+      ingestText: "字段映射、标准化、topic segment 和情绪基线自动生成。",
+      formats: ["CSV", "JSON", "TXT", "MD"],
+      scoreLabel: "QUALITY SIGNAL",
+      score: "72.4",
+      scoreText: "共情恢复不足，答非所问风险偏高。",
+      traceLabel: "RECOVERY TRACE",
+      trace: ["T3 用户情绪转负", "T5 assistant 解释过长", "T7 用户停止追问"],
+      packageLabel: "NEXT ACTION",
+      packageTitle: "remediation package",
+      packageText: "issue brief、badcases、acceptance gate 已可交给 Codex / Claude Code 执行。",
+    },
   },
   capabilitiesSection: {
-    eyebrow: "Capabilities",
-    title: "从真实对话问题，到可执行的修复任务。",
-    lead: "Zeval 把每一次失败会话变成一个带证据的修复任务，直接对接 Claude Code / Codex 的 agent 执行能力。",
+    eyebrow: "Product Surfaces",
+    title: "首页要讲清楚的不是愿景，而是现在能跑的链路。",
+    lead:
+      "当前项目已经从单次上传评估扩展到了数据集、基线、调优包、回放验证和 Chat 辅助复盘。landing page 应该直接把这个进展转化成可信的产品叙事。",
   },
   capabilities: [
     {
-      eyebrow: "01 / Evidence",
-      title: "每一个问题都带证据、原因、置信度",
+      eyebrow: "01 / Workbench",
+      title: "上传对话，直接得到可解释评估结果",
       description:
-        "不止一个分数。每条 bad case 都附带 evidence 片段、触发规则、原因解释和置信度，让产品和工程同屏对齐。",
-      bullets: [
-        "规则优先 + LLM 兜底的混合判定",
-        "goalCompletion、recoveryTrace 贯穿 session",
-        "answerOffTopic / empathy / giveup 等信号可追溯",
-      ],
+        "工作台负责文件上传、字段识别、流式评估进度、指标摘要、图表、建议和 baseline 保存，是当前最重要的演示入口。",
+      bullets: ["支持 CSV / JSON / TXT / MD", "返回 meta + metrics + charts + suggestions", "LLM 不可用时保留客观指标并显式降级"],
     },
     {
-      eyebrow: "02 / Agent-ready package",
-      title: "Bad case 自动编译为 Agent 可读调优包",
+      eyebrow: "02 / Dataset",
+      title: "把失败会话沉淀为可复用 case pool",
       description:
-        "issue-brief.md、remediation-spec.yaml、badcases.jsonl、acceptance-gate.yaml 四件套，直接交给 Claude Code / Codex 执行。",
-      bullets: [
-        "优先级 P0/P1/P2 自动判级",
-        "编辑范围收敛到 prompt / policy / orchestration / code",
-        "目标指标与 guard 阈值一起打包",
-      ],
+        "bad case 不再只是一次报告里的截图，而是可以被归档、标记、去重、抽样和回归验证的长期资产。",
+      bullets: ["topic-level bad case harvest", "自动风险信号 + 手动 false-positive override", "sample batch 支持固定回归集合"],
     },
     {
-      eyebrow: "03 / Replay & sandbox",
-      title: "修完是否变好，由回放和沙箱说了算",
+      eyebrow: "03 / Remediation",
+      title: "从发现问题走到可执行修复任务",
       description:
-        "baseline replay 按 winRate 判胜负、固定 sample batch 控回归、后续沙箱场景套件补 SLA。任何指标回退都不会通过门禁。",
-      bullets: [
-        "Replay gate + offline eval 双校验",
-        "改动前后的 KPI 均分可对比",
-        "guard 触发即 fail，避免“看起来变好了”",
-      ],
+        "调优包会把 issue brief、badcases、修复规格和验收门槛打包，交给 Coding Agent 修改 prompt、policy、orchestration 或代码。",
+      bullets: ["issue-brief.md", "remediation-spec.yaml", "badcases.jsonl + acceptance-gate.yaml"],
     },
     {
-      eyebrow: "04 / Judge governance",
-      title: "Judge 自身也被校准和漂移监测",
+      eyebrow: "04 / Online Eval",
+      title: "改完以后，用 replay 证明真的变好",
       description:
-        "gold set + 多标注人一致性（Cohen κ / Spearman）+ 漂移检测脚本，让评估本身可被审计，不是黑盒打分。",
-      bullets: [
-        "calibration:judge / agreement / drift 三条 CLI",
-        "报告留痕到 calibration/reports/",
-        "CI 回归门禁（规划中）",
-      ],
+        "在线评测把当前行为与历史 baseline 做对照，避免只看主观感觉发版，并为后续 release gate 留接口。",
+      bullets: ["customer reply API replay", "current-vs-baseline 对比", "validation runner 支持 offline / replay 两类验证"],
     },
   ],
   loopSection: {
-    eyebrow: "The Loop",
-    title: "每个失败，都应该进入下一次发版前的验证链路。",
+    eyebrow: "Loop",
+    title: "Zeval 的产品逻辑是质量闭环，不是评估面板。",
   },
   loopSteps: [
-    { step: "发现问题", description: "定位失败会话、死亡轮次、情绪低谷和高风险信号。" },
-    { step: "提取证据", description: "为每个问题输出 evidence、reason、confidence 和触发指标。" },
-    { step: "生成调优包", description: "把 bad case、验收门槛和修复目标编译成结构化任务文件。" },
-    { step: "交给 agent 执行", description: "让 Claude Code / Codex 基于调优包改 prompt、policy、orchestration 或代码。" },
-    { step: "回放 / 沙箱验证", description: "用 replay、固定批次和 sandbox 证明这次修复真的变好。" },
+    { step: "接收原始日志", description: "先用低门槛文件上传跑通，再逐步接 REST / SDK。" },
+    { step: "标准化对话", description: "parser、normalizer、segmenter 把脏 chatlog 变成统一结构。" },
+    { step: "计算质量信号", description: "客观指标稳定计算，主观指标输出 score / reason / evidence / confidence。" },
+    { step: "生成修复资产", description: "bad case 进入 case pool，并被编译成 agent-readable 调优包。" },
+    { step: "回放验证结果", description: "保存 baseline，用 replay / offline validation 判断修复是否通过。" },
   ],
   integrationSection: {
-    eyebrow: "Integration",
-    title: "三种接入方式，从演示到持续回归。",
-    lead: "先上传一批历史对话跑通闭环；稳定后再接 API，把每次发版前的评估变成固定动作。",
+    eyebrow: "Supported Integrations",
+    title: "当前支持的 4 种接入方式。",
+    lead:
+      "从低门槛文件上传开始验证，也可以直接接 API、trace ingest 或 SDK / CLI 示例，把评估结果接进内部系统、发版检查和 Agent 修复流程。",
   },
   integrations: [
     {
-      title: "上传文件",
-      text: "CSV / JSON / TXT / MD 直接进工作台，适合验证样例、复盘 bad case 和快速演示。",
-      code: "Workbench upload -> Run Judge -> Save baseline",
+      title: "文件上传",
+      text: "CSV / JSON / TXT / MD 对话日志直接进入工作台，适合客户样例、内部复盘和快速演示。",
+      code: "/workbench",
     },
     {
-      title: "REST API",
-      text: "把 rawRows 发到评估接口，返回 meta、指标、图表、建议和调优包入口。",
+      title: "评估 API",
+      text: "将标准 rawRows 发送到评估接口，返回 meta、指标、图表、证据、建议和调优包入口。",
       code: "POST /api/evaluate",
     },
     {
-      title: "Agent 工作流",
-      text: "把评估结果交给 Chat 或调优包模块，生成 Claude Code / Codex 可执行任务。",
-      code: "Bad cases -> package -> replay gate",
+      title: "Trace ingest",
+      text: "把线上 Agent 运行轨迹写入系统，后续可用于 bad case 归档、baseline 对比和质量回放。",
+      code: "POST /api/traces/ingest",
+    },
+    {
+      title: "SDK / CLI / Agent 包",
+      text: "通过示例 SDK、CLI 和 remediation package，把评估结果交给 Codex / Claude Code 执行修复。",
+      code: "SDK / CLI -> package -> replay",
     },
   ],
-  outcomesSection: { eyebrow: "Outcomes", title: "交付的不是报告本身，而是下一步动作。" },
+  outcomesSection: {
+    eyebrow: "Positioning",
+    title: "面向 AI Agent 产品团队的失败对话运营系统。",
+  },
   outcomes: [
-    { title: "给产品经理", text: "从“感觉这版好像变好了”切到“哪一轮出了问题、改完是否回升”。" },
-    { title: "给工程师", text: "把失败会话直接变成可执行的修复任务和回归门槛，而不是只看一屏图表。" },
-    { title: "给创始人", text: "把坏体验沉淀成长期资产，让每次失败都能变成下次发版前的测试。" },
+    { title: "给产品", text: "快速回答哪一轮坏了、用户为什么掉线、哪些建议可以马上改。" },
+    { title: "给工程", text: "把模糊体验问题翻译成有 evidence 和 acceptance gate 的修复任务。" },
+    { title: "给团队 leader", text: "用 baseline 和回放验证约束发版质量，让每次失败都沉淀成测试资产。" },
   ],
-  testimonialsSection: { eyebrow: "Testimonials", title: "已经把质量闭环跑通的团队怎么说。" },
-  testimonials: [
-    {
-      quote: "以前我们 release 前只靠研发凭感觉看几条对话；用 Zeval 之后每次发版都带着一份由调优包证明过的回归报告。",
-      author: "产品负责人 · ToB 客服 Agent",
-    },
-    {
-      quote: "最关键的不是指标，是它把“哪一轮为什么失败”说清楚了。我们的 agent 迭代第一次有了可执行 checklist。",
-      author: "Tech Lead · 情绪陪伴产品",
-    },
-  ],
-  faqSection: { eyebrow: "FAQ", title: "常见问题" },
+  faqSection: { eyebrow: "FAQ", title: "当前阶段应该怎么理解 Zeval？" },
   faq: [
     {
-      question: "Zeval 和传统 eval 平台有什么区别？",
+      question: "Zeval 现在是平台还是 MVP？",
       answer:
-        "传统 eval 提供的是“给定数据集 + 给定指标”的打分面板。Zeval 的出发点是生产 bad case → 证据包 → 调优任务 → 回放验证的闭环，面向的是“下一次发版前把这次问题修掉”。",
+        "当前定位应该坦诚表达为 MVP 质量闭环，不是大而全平台。优势是上传、评估、bad case、调优包、回放验证这条链路已经可以演示和迭代。",
     },
     {
-      question: "需要接入内部系统吗？",
+      question: "为什么不把 landing page 做成通用 eval SaaS？",
       answer:
-        "不用。最低支持 CSV / JSON / TXT / MD 的对话日志直接上传。接入 SDK 后可以持续保存历史 baseline，并在工作台叠加趋势对比。",
+        "通用 eval SaaS 叙事太容易撞车。Zeval 更锋利的定位是把真实失败对话转成下一次发版前的修复任务和回归测试。",
     },
     {
-      question: "LLM judge 的稳定性如何保障？",
+      question: "LLM Judge 不稳定怎么办？",
       answer:
-        "我们提供 gold set + 多标注人一致性 + drift 检测三件套。任何 judge 切换都必须先过 κ/Spearman 阈值，报告留痕可审计。",
+        "评估链路采用规则优先、LLM 辅助。主观评估必须输出 score / reason / evidence / confidence；LLM 不可用时保留客观指标并标记降级。",
     },
     {
-      question: "调优包如何交给 Agent 执行？",
+      question: "第一版客户该怎么试？",
       answer:
-        "每个调优包都是 4 个标准文件（issue-brief.md / remediation-spec.yaml / badcases.jsonl / acceptance-gate.yaml），可以直接粘贴到 Claude Code / Codex 的任务提示里，或通过我们的 agent-run 接口派发。",
-    },
-    {
-      question: "支持私有化部署吗？",
-      answer:
-        "支持。核心 pipeline 是纯 Node/Next 本地代码，判定/召回层可以对接自建模型；数据留痕都是本地 artifact 文件，后续会接 SQLite + 异步队列。",
+        "最小路径是准备一批真实 chatlog，上传到工作台，查看核心指标、证据和建议，再生成调优包交给 agent 或工程师执行。",
     },
   ],
   cta: {
-    eyebrow: "Less dashboards. More fixes.",
-    title: "不要再靠感觉发版。",
-    lead: "把一批真实对话带进来，让 Zeval 自动告诉你哪一轮出了问题、怎么修、改完是否真的变好。",
+    eyebrow: "Run The Loop",
+    title: "拿一批真实对话，先把失败定位出来。",
+    lead:
+      "从工作台开始跑通 MVP。先证明 Zeval 能把坏对话变成可行动任务，再考虑 SDK、队列、CI gate 和更完整的部署。",
   },
   footer: {
-    tagline: "AI Quality Loop For Agent Products",
-    columns: {
-      product: {
+    tagline: "AI conversation quality loop for teams shipping agent products.",
+    columns: [
+      {
         title: "产品",
         links: [
           { label: "工作台", href: "/workbench" },
-          { label: "调优包", href: "/remediation-packages" },
           { label: "案例池", href: "/datasets" },
+          { label: "调优包", href: "/remediation-packages" },
           { label: "在线评测", href: "/online-eval" },
         ],
       },
-      resources: {
+      {
+        title: "开发",
+        links: [
+          { label: "Chat Copilot", href: "/chat" },
+          { label: "Integrations", href: "/integrations" },
+          { label: "Docs API", href: "/api/docs" },
+        ],
+      },
+      {
         title: "资源",
         links: [
-          { label: "Docs", href: "/docs" },
-          { label: "Blog", href: "/blog" },
-          { label: "Pricing", href: "/pricing" },
+          { label: "API Docs", href: "/api/docs" },
+          { label: "Demo CSV", href: "/sample-data/ecommerce-angry-escalation.csv" },
         ],
       },
-      company: {
-        title: "公司",
-        links: [
-          { label: "About", href: "/about" },
-          { label: "联系我们", href: "/contact" },
-          { label: "Privacy", href: "/privacy" },
-          { label: "Terms", href: "/terms" },
-        ],
-      },
-    },
-    copyright: (year) => `© ${year} Zeval · 保留所有权利。`,
-    builtFor: "为构建 agent 产品的团队而生。",
+    ],
+    copyright: (year) => `© ${year} Zeval.`,
+    builtFor: "为正在交付 AI Agent 产品的团队而建。",
   },
 };
 
 const EN: LandingCopy = {
   nav: [
-    { label: "Docs", href: "/docs" },
-    { label: "Pricing", href: "/pricing" },
-    { label: "Blog", href: "/blog" },
-    { label: "About", href: "/about" },
+    { label: "Workbench", href: "/workbench" },
+    { label: "Integrations", href: "#integration" },
+    { label: "Case pool", href: "/datasets" },
+    { label: "Packages", href: "/remediation-packages" },
+    { label: "Online eval", href: "/online-eval" },
   ],
-  ctaPrimary: "Talk to an expert",
-  ctaSecondary: "Open workbench",
-  ctaLogin: "Login",
+  ctaPrimary: "Open workbench",
+  ctaSecondary: "View online eval",
+  ctaTertiary: "View packages",
   langSwitch: { label: "EN", switchTo: "中" },
-  trustHeader: "Agent products already running the loop",
-  trustLogos: [
-    "AI Team · B2B Support",
-    "AI Team · Emotional Companion",
-    "AI Team · E-commerce Support",
-    "AI Team · Internal IT",
-    "AI Team · Education Assistant",
-  ],
   hero: {
-    eyebrow: "AI Quality Loop · For Agent Products",
-    headline: {
-      line1: "Every failed conversation",
-      line2Pre: "becomes the next release's ",
-      accent: "test",
-      line2Post: ".",
-    },
-    lead: {
-      intro: "Zeval isn't another eval dashboard. It compiles real bad cases into",
-      bold: " evidence, remediation packages, and regression checks",
-      outro: ", so every failure feeds back into the quality loop before your next ship.",
-    },
+    eyebrow: "AI Conversation Quality Loop",
+    headline: "Turn failed AI conversations into regression tests before the next release.",
+    lead:
+      "Zeval takes CSV / JSON / TXT / MD chat logs and runs parsing, evaluation, evidence extraction, bad-case storage, remediation packages, and replay validation. It is not just a scoring dashboard. It is a quality loop PMs and engineers can use to fix real failures.",
     stats: [
-      { label: "Core loop", value: "Detect → Evidence → Package → Replay" },
-      { label: "Inputs", value: "CSV · JSON · TXT · MD" },
-      { label: "Judging", value: "Rules first · LLM fallback" },
-      { label: "Governance", value: "κ agreement · drift checks" },
+      { label: "Inputs", value: "CSV / JSON / TXT / MD" },
+      { label: "Evaluation", value: "Objective metrics + LLM Judge" },
+      { label: "Outputs", value: "Charts / evidence / suggestions / bad cases" },
+      { label: "Loop", value: "baseline + package + replay" },
     ],
+    previewLabel: "Zeval product preview",
+    preview: {
+      ingestLabel: "INGEST",
+      ingestTitle: "chatlog upload",
+      ingestText: "Field mapping, normalization, topic segments, and emotion baselines are generated automatically.",
+      formats: ["CSV", "JSON", "TXT", "MD"],
+      scoreLabel: "QUALITY SIGNAL",
+      score: "72.4",
+      scoreText: "Weak empathy recovery with elevated off-topic risk.",
+      traceLabel: "RECOVERY TRACE",
+      trace: ["T3 user sentiment turns negative", "T5 assistant over-explains", "T7 user stops asking"],
+      packageLabel: "NEXT ACTION",
+      packageTitle: "remediation package",
+      packageText: "Issue brief, bad cases, and acceptance gate are ready for Codex / Claude Code.",
+    },
   },
   capabilitiesSection: {
-    eyebrow: "Capabilities",
-    title: "From real conversation problems to executable fix tasks.",
-    lead: "Zeval turns each failed session into an evidence-backed fix task that plugs directly into Claude Code / Codex.",
+    eyebrow: "Product Surfaces",
+    title: "The landing page should sell the runnable loop, not a vague platform promise.",
+    lead:
+      "The current product already goes beyond one-off evaluation: workbench, datasets, baselines, remediation packages, replay validation, and Chat-assisted review.",
   },
   capabilities: [
     {
-      eyebrow: "01 / Evidence",
-      title: "Every issue ships with evidence, reason and confidence",
+      eyebrow: "01 / Workbench",
+      title: "Upload transcripts and get explainable evaluation results",
       description:
-        "Not just a score. Each bad case carries evidence snippets, triggered rules, reasons, and confidence — so PMs and engineers see the same thing.",
-      bullets: [
-        "Hybrid judging: rules first, LLM as fallback",
-        "goalCompletion and recoveryTrace tracked across sessions",
-        "answerOffTopic / empathy / giveup signals are traceable",
-      ],
+        "The workbench is the main demo path: file upload, field detection, streamed progress, metric summaries, charts, suggestions, and baseline saves.",
+      bullets: ["CSV / JSON / TXT / MD support", "Returns meta + metrics + charts + suggestions", "Keeps objective metrics when LLM judging degrades"],
     },
     {
-      eyebrow: "02 / Agent-ready package",
-      title: "Bad cases compile into agent-readable remediation packages",
+      eyebrow: "02 / Dataset",
+      title: "Persist failed sessions as reusable case assets",
       description:
-        "Four files — issue-brief.md, remediation-spec.yaml, badcases.jsonl, acceptance-gate.yaml — handed off directly to Claude Code / Codex.",
-      bullets: [
-        "Auto-prioritized P0 / P1 / P2",
-        "Edit scope scoped to prompt / policy / orchestration / code",
-        "Target metrics and guard thresholds bundled in",
-      ],
+        "Bad cases should not disappear inside a report. They become assets that can be deduped, sampled, overridden, and reused for regression.",
+      bullets: ["Topic-level bad case harvest", "Automatic risk signals + manual false-positive override", "Sample batches for fixed regression sets"],
     },
     {
-      eyebrow: "03 / Replay & sandbox",
-      title: "Replay and sandbox decide whether the fix actually worked",
+      eyebrow: "03 / Remediation",
+      title: "Move from finding issues to executable fix tasks",
       description:
-        "Baseline replay decides win-rate, fixed sample batches catch regressions, and sandbox suites cover SLAs. Any metric regression fails the gate.",
-      bullets: [
-        "Replay gate + offline eval double-check",
-        "Side-by-side KPI deltas before and after",
-        "Guard trips fail the gate — no 'feels better' shipping",
-      ],
+        "Packages compile issue briefs, bad cases, remediation specs, and acceptance gates so a coding agent can edit prompt, policy, orchestration, or code.",
+      bullets: ["issue-brief.md", "remediation-spec.yaml", "badcases.jsonl + acceptance-gate.yaml"],
     },
     {
-      eyebrow: "04 / Judge governance",
-      title: "The judge itself is calibrated and drift-monitored",
+      eyebrow: "04 / Online Eval",
+      title: "After the fix, replay proves whether quality improved",
       description:
-        "Gold set + multi-rater agreement (Cohen κ / Spearman) + drift detection — evaluation becomes auditable, not a black-box score.",
-      bullets: [
-        "Three CLIs: calibration:judge / agreement / drift",
-        "Reports persisted to calibration/reports/",
-        "CI regression gating (planned)",
-      ],
+        "Online eval compares current behavior against saved baselines, replacing subjective release judgment with replay and offline validation.",
+      bullets: ["Customer reply API replay", "Current-vs-baseline comparison", "Validation runner supports offline and replay checks"],
     },
   ],
   loopSection: {
-    eyebrow: "The Loop",
-    title: "Every failure should enter the gate before your next release.",
+    eyebrow: "Loop",
+    title: "Zeval is a quality loop, not an evaluation panel.",
   },
   loopSteps: [
-    { step: "Detect", description: "Surface failed sessions, dead turns, emotion troughs, and high-risk signals." },
-    { step: "Extract evidence", description: "Output evidence, reason, confidence, and triggered metrics for each issue." },
-    { step: "Compile package", description: "Bundle bad cases, acceptance gates, and fix targets into structured task files." },
-    { step: "Hand to agent", description: "Let Claude Code / Codex modify prompt, policy, orchestration, or code from the package." },
-    { step: "Replay / sandbox", description: "Use replay, fixed batches, and sandbox to prove the fix actually improved things." },
+    { step: "Receive raw logs", description: "Start with low-friction uploads, then move to REST or SDK integration." },
+    { step: "Normalize conversations", description: "Parser, normalizer, and segmenter turn messy chat logs into a canonical structure." },
+    { step: "Compute signals", description: "Objective metrics are deterministic, while subjective metrics include score, reason, evidence, and confidence." },
+    { step: "Create fix assets", description: "Bad cases enter the case pool and compile into agent-readable remediation packages." },
+    { step: "Replay validation", description: "Saved baselines, replay, and offline validation decide whether the fix passes." },
   ],
   integrationSection: {
-    eyebrow: "Integration",
-    title: "Three integration paths, from demo to release gates.",
-    lead: "Start with uploaded transcripts. Once the loop works, call the API before every release and keep baselines comparable.",
+    eyebrow: "Supported Integrations",
+    title: "Four integration paths currently supported.",
+    lead:
+      "Start with low-friction file uploads, or connect through APIs, trace ingest, and SDK / CLI examples to bring evaluation into internal tools, release checks, and agent remediation workflows.",
   },
   integrations: [
     {
       title: "File upload",
-      text: "Drop CSV / JSON / TXT / MD into the workbench for demos, bad-case review, and quick validation.",
-      code: "Workbench upload -> Run Judge -> Save baseline",
+      text: "Drop CSV / JSON / TXT / MD chat logs into the workbench for customer samples, internal reviews, and quick demos.",
+      code: "/workbench",
     },
     {
-      title: "REST API",
-      text: "Send rawRows to the evaluation endpoint and receive meta, metrics, charts, suggestions, and package entry points.",
+      title: "Evaluation API",
+      text: "Send canonical rawRows to the evaluation endpoint and receive meta, metrics, charts, evidence, suggestions, and package entry points.",
       code: "POST /api/evaluate",
     },
     {
-      title: "Agent workflow",
-      text: "Hand results to Chat or remediation packages and generate tasks executable by Claude Code / Codex.",
-      code: "Bad cases -> package -> replay gate",
+      title: "Trace ingest",
+      text: "Write production Agent traces into Zeval for bad-case storage, baseline comparisons, and quality replay.",
+      code: "POST /api/traces/ingest",
+    },
+    {
+      title: "SDK / CLI / Agent package",
+      text: "Use SDK and CLI examples plus remediation packages to hand evaluation results to Codex / Claude Code.",
+      code: "SDK / CLI -> package -> replay",
     },
   ],
-  outcomesSection: { eyebrow: "Outcomes", title: "What ships isn't a report — it's the next move." },
+  outcomesSection: {
+    eyebrow: "Positioning",
+    title: "Failure-ops for teams shipping AI Agent products.",
+  },
   outcomes: [
-    { title: "For PMs", text: "Move from 'this version feels better' to 'which turn broke, and did the fix recover it'." },
-    { title: "For engineers", text: "Failed sessions become executable fix tasks with regression gates, not another chart wall." },
-    { title: "For founders", text: "Bad experiences become long-lived assets — every failure turns into a pre-release test." },
+    { title: "For PMs", text: "Answer which turn broke, why the user dropped, and which fixes can ship now." },
+    { title: "For engineers", text: "Translate fuzzy experience issues into evidence-backed tasks with acceptance gates." },
+    { title: "For team leads", text: "Use baselines and replay validation to turn every failure into a reusable test asset." },
   ],
-  testimonialsSection: { eyebrow: "Testimonials", title: "Teams already running the quality loop." },
-  testimonials: [
-    {
-      quote:
-        "Releases used to mean engineers eyeballing a few transcripts. With Zeval every release ships with a regression report proven by a remediation package.",
-      author: "Head of Product · B2B Support Agent",
-    },
-    {
-      quote:
-        "The metric isn't the point — it's the 'which turn failed and why' that finally clicks. Our agent iteration has a real checklist for the first time.",
-      author: "Tech Lead · Emotional Companion product",
-    },
-  ],
-  faqSection: { eyebrow: "FAQ", title: "Frequently asked" },
+  faqSection: { eyebrow: "FAQ", title: "How to understand Zeval at this stage" },
   faq: [
     {
-      question: "How is Zeval different from a traditional eval platform?",
+      question: "Is Zeval a platform or an MVP?",
       answer:
-        "Traditional eval gives you a 'fixed dataset + fixed metric' scoreboard. Zeval starts from production bad cases → evidence packs → fix tasks → replay verification — closing the loop on 'fix this before the next release'.",
+        "It should be positioned honestly as an MVP quality loop. The strength is that upload, evaluation, bad cases, packages, and replay validation can already be demonstrated and iterated.",
     },
     {
-      question: "Do I need to integrate internal systems?",
+      question: "Why not position it as a generic eval SaaS?",
       answer:
-        "No. The minimum path accepts CSV / JSON / TXT / MD chat logs uploaded directly. After SDK integration, saved baselines can be compared as trend overlays in the workbench.",
+        "Generic eval SaaS positioning is crowded. Zeval is sharper when it turns real failed conversations into fix tasks and regression tests before the next release.",
     },
     {
-      question: "How is the LLM judge kept stable?",
+      question: "What if the LLM Judge is unstable?",
       answer:
-        "Gold set + multi-rater agreement + drift detection. Any judge swap must clear κ/Spearman thresholds first, with auditable reports.",
+        "The pipeline is rules-first with LLM assistance. Subjective metrics must include score, reason, evidence, and confidence; if LLM judging is unavailable, objective metrics remain and degradation is explicit.",
     },
     {
-      question: "How does the agent execute the package?",
+      question: "How should a first customer try it?",
       answer:
-        "Each package is four standard files (issue-brief.md / remediation-spec.yaml / badcases.jsonl / acceptance-gate.yaml). Paste them into Claude Code / Codex prompts, or dispatch through our agent-run API.",
-    },
-    {
-      question: "Self-hosting?",
-      answer:
-        "Supported. The core pipeline is plain Node/Next code; the judging/recall layer can plug in self-hosted models. Artifacts persist locally; SQLite + async queue is on the roadmap.",
+        "Bring real chat logs into the workbench, inspect metrics, evidence, and suggestions, then generate a remediation package for an agent or engineer to execute.",
     },
   ],
   cta: {
-    eyebrow: "Less dashboards. More fixes.",
-    title: "Stop shipping on vibes.",
-    lead: "Bring in real conversations and let Zeval tell you which turn broke, how to fix it, and whether the fix actually worked.",
+    eyebrow: "Run The Loop",
+    title: "Start with real conversations and locate the failures.",
+    lead:
+      "Use the workbench to prove the MVP first. Once Zeval turns bad conversations into actionable tasks, move into SDKs, queues, CI gates, and fuller deployment.",
   },
   footer: {
-    tagline: "AI Quality Loop For Agent Products",
-    columns: {
-      product: {
+    tagline: "AI conversation quality loop for teams shipping agent products.",
+    columns: [
+      {
         title: "Product",
         links: [
           { label: "Workbench", href: "/workbench" },
-          { label: "Remediation packages", href: "/remediation-packages" },
           { label: "Case pool", href: "/datasets" },
+          { label: "Packages", href: "/remediation-packages" },
           { label: "Online eval", href: "/online-eval" },
         ],
       },
-      resources: {
+      {
+        title: "Build",
+        links: [
+          { label: "Chat Copilot", href: "/chat" },
+          { label: "Integrations", href: "/integrations" },
+          { label: "Docs API", href: "/api/docs" },
+        ],
+      },
+      {
         title: "Resources",
         links: [
-          { label: "Docs", href: "/docs" },
-          { label: "Blog", href: "/blog" },
-          { label: "Pricing", href: "/pricing" },
+          { label: "API Docs", href: "/api/docs" },
+          { label: "Demo CSV", href: "/sample-data/ecommerce-angry-escalation.csv" },
         ],
       },
-      company: {
-        title: "Company",
-        links: [
-          { label: "About", href: "/about" },
-          { label: "Talk to an expert", href: "/contact" },
-          { label: "Privacy", href: "/privacy" },
-          { label: "Terms", href: "/terms" },
-        ],
-      },
-    },
-    copyright: (year) => `© ${year} Zeval · All rights reserved.`,
-    builtFor: "Built for teams that ship agent products.",
+    ],
+    copyright: (year) => `© ${year} Zeval.`,
+    builtFor: "Built for teams shipping AI Agent products.",
   },
 };
 

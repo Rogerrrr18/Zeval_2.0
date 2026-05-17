@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { getZeroreRequestContext } from "@/auth/context";
+import { buildOnlineEvalProjection } from "@/db/evaluation-projection";
+import { createSupabaseTypedDatabase } from "@/db/supabase-typed-database";
 import { createDatasetStore } from "@/eval-datasets/storage";
 import { runEvaluatePipeline } from "@/pipeline/evaluateRun";
-import { replayAssistantRowsWithHttpApi, resolveReplyEndpoint } from "@/online-eval/replayAssistant";
+import {
+  DEMO_MOCK_REPLY_API,
+  replayAssistantRowsWithDemoMock,
+  replayAssistantRowsWithHttpApi,
+  resolveReplyEndpoint,
+} from "@/online-eval/replayAssistant";
 import { createWorkbenchBaselineStore } from "@/workbench";
 import { onlineReplayEvaluateBodySchema } from "@/schemas/online-eval";
 import type { DatasetCaseRecord, SampleBatchRecord } from "@/eval-datasets/storage/types";
@@ -59,9 +66,12 @@ export async function POST(request: Request) {
       "http://127.0.0.1:4200";
     const replyEndpoint = resolveReplyEndpoint(baseUrl);
 
-    const replayedRows = await replayAssistantRowsWithHttpApi(rawRows, replyEndpoint, {
-      timeoutMs: body.replyTimeoutMs,
-    });
+    const replayedRows =
+      replyEndpoint === DEMO_MOCK_REPLY_API
+        ? await replayAssistantRowsWithDemoMock(rawRows)
+        : await replayAssistantRowsWithHttpApi(rawRows, replyEndpoint, {
+            timeoutMs: body.replyTimeoutMs,
+          });
 
     const runId = body.runId ?? `online_${Date.now()}`;
     const scenarioId = body.scenarioId ?? baselineEvaluate?.scenarioEvaluation?.scenarioId;
@@ -71,6 +81,33 @@ export async function POST(request: Request) {
       scenarioId,
     });
     evaluate.meta.workspaceId = context.workspaceId;
+
+    // ── P2: Persist online eval to typed Supabase tables (best-effort) ──────────
+    const projectId = context.projectId ?? context.workspaceId;
+    try {
+      const typedDb = tryCreateTypedDb();
+      if (typedDb) {
+        const baselineRunId = body.baselineRef
+          ? buildBaselineRunId(projectId, body.baselineRef.runId)
+          : undefined;
+        const projection = buildOnlineEvalProjection({
+          projectId,
+          runId,
+          replyApiUrl: replyEndpoint,
+          baselineRunId,
+          replayedRows,
+          baselineEvaluate,
+          currentEvaluate: evaluate,
+        });
+        await typedDb.writeOnlineEvalProjection(projection);
+        console.info(
+          `[ONLINE-EVAL] runId=${runId} TYPED_DB replay_turns=${projection.replayTurns.length} comparisons=${projection.runComparisons.length}`,
+        );
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[ONLINE-EVAL] runId=${runId} TYPED_DB_FAILED ${msg}`);
+    }
 
     return NextResponse.json({
       runId: evaluate.runId,
@@ -125,6 +162,27 @@ function parseStoredTranscript(transcript: string): Array<{ role: ChatRole; cont
       };
     })
     .filter((item): item is { role: ChatRole; content: string } => Boolean(item?.content));
+}
+
+/** Try to instantiate SupabaseTypedDatabase; return null when DATABASE_URL is absent. */
+function tryCreateTypedDb() {
+  try {
+    return createSupabaseTypedDatabase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-derive the stable baseline_run UUID from a project and runId.
+ * Must match the formula in buildBaselineProjection().
+ */
+function buildBaselineRunId(projectId: string, runId: string): string {
+  // The same stableUuid formula used in evaluation-projection.ts
+  const { createHash } = require("node:crypto") as typeof import("node:crypto");
+  const parts = ["baseline-run", projectId, runId];
+  const hex = createHash("sha256").update(parts.join("\x00")).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /**

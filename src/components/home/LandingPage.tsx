@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { useState } from "react";
 import { ZevalLogo } from "@/components/brand/ZevalLogo";
 import { LANDING_COPY, type Locale } from "@/i18n/landing";
@@ -67,82 +68,95 @@ export function LandingPage() {
             onClick={handleToggleLocale}
             aria-label={`Switch to ${copy.langSwitch.switchTo}`}
           >
-            <span className={styles.langActive}>{copy.langSwitch.label}</span>
-            <span className={styles.langDivider} aria-hidden>/</span>
-            <span className={styles.langInactive}>{copy.langSwitch.switchTo}</span>
+            <span>{copy.langSwitch.label}</span>
+            <span aria-hidden>/</span>
+            <span>{copy.langSwitch.switchTo}</span>
           </button>
-          <Link href="/contact" className={styles.primaryPill}>
+          <Link href="/workbench" className={styles.primaryButton}>
             {copy.ctaPrimary}
-          </Link>
-          <Link href="/workbench" className={styles.loginPill}>
-            <span>{copy.ctaLogin}</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M15 3h6v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M10 14L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path
-                d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
           </Link>
         </div>
       </header>
 
       <main className={styles.main}>
         <section className={styles.hero}>
-          <p className={styles.eyebrow}>{copy.hero.eyebrow}</p>
-          <h1 className={styles.heroHeadline}>
-            {copy.hero.headline.line1}
-            <br />
-            {copy.hero.headline.line2Pre}
-            <span className={styles.heroAccent}>{copy.hero.headline.accent}</span>
-            {copy.hero.headline.line2Post}
-          </h1>
-          <p className={styles.heroLead}>
-            {copy.hero.lead.intro}
-            <strong>{copy.hero.lead.bold}</strong>
-            {copy.hero.lead.outro}
-          </p>
-          <div className={styles.heroActions}>
-            <Link href="/contact" className={styles.primaryPill}>
-              {copy.ctaPrimary}
-            </Link>
-            <Link href="/workbench" className={styles.secondaryPill}>
-              {copy.ctaSecondary}
-            </Link>
+          <div className={styles.heroCopy}>
+            <p className={styles.eyebrow}>{copy.hero.eyebrow}</p>
+            <h1>{copy.hero.headline}</h1>
+            <p className={styles.heroLead}>{copy.hero.lead}</p>
+            <div className={styles.heroActions}>
+              <Link href="/workbench" className={styles.primaryButton}>
+                {copy.ctaPrimary}
+              </Link>
+              <Link href="/online-eval" className={styles.secondaryButton}>
+                {copy.ctaSecondary}
+              </Link>
+            </div>
+            <dl className={styles.heroStats}>
+              {copy.hero.stats.map((stat) => (
+                <div key={stat.label}>
+                  <dt>{stat.label}</dt>
+                  <dd>{stat.value}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
-          <dl className={styles.heroStats}>
-            {copy.hero.stats.map((stat) => (
-              <div key={stat.label}>
-                <dt>{stat.label}</dt>
-                <dd>{stat.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
 
-        <section className={styles.trustStrip} aria-label={copy.trustHeader}>
-          <p>{copy.trustHeader}</p>
-          <ul>
-            {copy.trustLogos.map((logo) => (
-              <li key={logo}>{logo}</li>
-            ))}
-          </ul>
+          <div className={styles.productVisual} aria-label={copy.hero.previewLabel}>
+            <div className={styles.visualTopbar}>
+              <span />
+              <span />
+              <span />
+              <strong>Zeval Workbench</strong>
+            </div>
+            <div className={styles.visualGrid}>
+              <div className={styles.ingestPanel}>
+                <span className={styles.panelLabel}>{copy.hero.preview.ingestLabel}</span>
+                <strong>{copy.hero.preview.ingestTitle}</strong>
+                <p>{copy.hero.preview.ingestText}</p>
+                <div className={styles.fileChips}>
+                  {copy.hero.preview.formats.map((format) => (
+                    <span key={format}>{format}</span>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.scorePanel}>
+                <span className={styles.panelLabel}>{copy.hero.preview.scoreLabel}</span>
+                <strong>{copy.hero.preview.score}</strong>
+                <p>{copy.hero.preview.scoreText}</p>
+                <div className={styles.scoreBars}>
+                  <span style={{ "--bar": "82%" } as CSSProperties} />
+                  <span style={{ "--bar": "64%" } as CSSProperties} />
+                  <span style={{ "--bar": "48%" } as CSSProperties} />
+                </div>
+              </div>
+              <div className={styles.tracePanel}>
+                <span className={styles.panelLabel}>{copy.hero.preview.traceLabel}</span>
+                <ol>
+                  {copy.hero.preview.trace.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ol>
+              </div>
+              <div className={styles.packagePanel}>
+                <span className={styles.panelLabel}>{copy.hero.preview.packageLabel}</span>
+                <strong>{copy.hero.preview.packageTitle}</strong>
+                <p>{copy.hero.preview.packageText}</p>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className={styles.section} id="capabilities">
           <div className={styles.sectionIntro}>
-            <p className={styles.eyebrowMuted}>{copy.capabilitiesSection.eyebrow}</p>
+            <p className={styles.eyebrow}>{copy.capabilitiesSection.eyebrow}</p>
             <h2>{copy.capabilitiesSection.title}</h2>
-            <p className={styles.sectionLead}>{copy.capabilitiesSection.lead}</p>
+            <p>{copy.capabilitiesSection.lead}</p>
           </div>
           <div className={styles.capabilityGrid}>
             {copy.capabilities.map((item) => (
               <article className={styles.capabilityCard} key={item.title}>
-                <span className={styles.capabilityEyebrow}>{item.eyebrow}</span>
+                <span>{item.eyebrow}</span>
                 <h3>{item.title}</h3>
                 <p>{item.description}</p>
                 <ul>
@@ -156,14 +170,14 @@ export function LandingPage() {
         </section>
 
         <section className={styles.loopSection} id="loop">
-          <div className={styles.sectionIntroInverse}>
-            <p className={styles.eyebrowLight}>{copy.loopSection.eyebrow}</p>
+          <div className={styles.sectionIntro}>
+            <p className={styles.eyebrow}>{copy.loopSection.eyebrow}</p>
             <h2>{copy.loopSection.title}</h2>
           </div>
           <div className={styles.loopGrid}>
             {copy.loopSteps.map((item, index) => (
               <article className={styles.loopCard} key={item.step}>
-                <span>Step {index + 1}</span>
+                <span>{String(index + 1).padStart(2, "0")}</span>
                 <strong>{item.step}</strong>
                 <p>{item.description}</p>
               </article>
@@ -173,9 +187,9 @@ export function LandingPage() {
 
         <section className={styles.integrationSection} id="integration">
           <div className={styles.sectionIntro}>
-            <p className={styles.eyebrowMuted}>{copy.integrationSection.eyebrow}</p>
+            <p className={styles.eyebrow}>{copy.integrationSection.eyebrow}</p>
             <h2>{copy.integrationSection.title}</h2>
-            <p className={styles.sectionLead}>{copy.integrationSection.lead}</p>
+            <p>{copy.integrationSection.lead}</p>
           </div>
           <div className={styles.integrationGrid}>
             {copy.integrations.map((item) => (
@@ -190,7 +204,7 @@ export function LandingPage() {
 
         <section className={styles.section} id="outcomes">
           <div className={styles.sectionIntro}>
-            <p className={styles.eyebrowMuted}>{copy.outcomesSection.eyebrow}</p>
+            <p className={styles.eyebrow}>{copy.outcomesSection.eyebrow}</p>
             <h2>{copy.outcomesSection.title}</h2>
           </div>
           <div className={styles.outcomeGrid}>
@@ -203,24 +217,9 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section className={styles.testimonialSection} id="testimonials">
-          <div className={styles.sectionIntro}>
-            <p className={styles.eyebrowMuted}>{copy.testimonialsSection.eyebrow}</p>
-            <h2>{copy.testimonialsSection.title}</h2>
-          </div>
-          <div className={styles.testimonialGrid}>
-            {copy.testimonials.map((item) => (
-              <figure className={styles.testimonialCard} key={item.author}>
-                <blockquote>“{item.quote}”</blockquote>
-                <figcaption>— {item.author}</figcaption>
-              </figure>
-            ))}
-          </div>
-        </section>
-
         <section className={styles.faqSection} id="faq">
           <div className={styles.sectionIntro}>
-            <p className={styles.eyebrowMuted}>{copy.faqSection.eyebrow}</p>
+            <p className={styles.eyebrow}>{copy.faqSection.eyebrow}</p>
             <h2>{copy.faqSection.title}</h2>
           </div>
           <div className={styles.faqList}>
@@ -235,16 +234,16 @@ export function LandingPage() {
 
         <section className={styles.ctaSection}>
           <div>
-            <p className={styles.eyebrowMuted}>{copy.cta.eyebrow}</p>
+            <p className={styles.eyebrow}>{copy.cta.eyebrow}</p>
             <h2>{copy.cta.title}</h2>
-            <p className={styles.sectionLead}>{copy.cta.lead}</p>
+            <p>{copy.cta.lead}</p>
           </div>
           <div className={styles.ctaActions}>
-            <Link href="/contact" className={styles.primaryPill}>
+            <Link href="/workbench" className={styles.primaryButton}>
               {copy.ctaPrimary}
             </Link>
-            <Link href="/workbench" className={styles.secondaryPill}>
-              {copy.ctaSecondary}
+            <Link href="/remediation-packages" className={styles.secondaryButton}>
+              {copy.ctaTertiary}
             </Link>
           </div>
         </section>
@@ -253,37 +252,20 @@ export function LandingPage() {
       <footer className={styles.footer}>
         <div className={styles.footerInner}>
           <div className={styles.footerBrand}>
-            <span className={styles.brandMark}>ZE</span>
-            <div>
-              <strong>Zeval</strong>
-              <p>{copy.footer.tagline}</p>
-            </div>
+            <ZevalLogo compact />
+            <p>{copy.footer.tagline}</p>
           </div>
           <div className={styles.footerLinks}>
-            <div>
-              <h4>{copy.footer.columns.product.title}</h4>
-              {copy.footer.columns.product.links.map((link) => (
-                <Link key={link.href} href={link.href}>
-                  {link.label}
-                </Link>
-              ))}
-            </div>
-            <div>
-              <h4>{copy.footer.columns.resources.title}</h4>
-              {copy.footer.columns.resources.links.map((link) => (
-                <Link key={link.href} href={link.href}>
-                  {link.label}
-                </Link>
-              ))}
-            </div>
-            <div>
-              <h4>{copy.footer.columns.company.title}</h4>
-              {copy.footer.columns.company.links.map((link) => (
-                <Link key={link.href} href={link.href}>
-                  {link.label}
-                </Link>
-              ))}
-            </div>
+            {copy.footer.columns.map((column) => (
+              <div key={column.title}>
+                <h4>{column.title}</h4>
+                {column.links.map((link) => (
+                  <Link key={link.href} href={link.href}>
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
         <div className={styles.footerBottom}>

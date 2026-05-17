@@ -1,5 +1,5 @@
 /**
- * @fileoverview Linear stepper for guiding users through a 4-step console flow.
+ * @fileoverview Linear stepper for progress-focused console flows.
  */
 
 "use client";

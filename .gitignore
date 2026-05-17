@@ -39,6 +39,7 @@ supabase/.temp/
 
 # local workspace runtime data
 /workspaces/
+/eval-runs/
 
 # vercel
 .vercel

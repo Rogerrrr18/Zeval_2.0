@@ -1,5 +1,10 @@
 /**
  * @fileoverview Shared evaluation pipeline used by HTTP routes and batch jobs.
+ *
+ * P1 重构：
+ *  - enrichRows 现为同步函数，不再返回 topicSegments
+ *  - 新增 enableDynamicReplay / agentApiEndpoint 选项
+ *  - dynamicReplayStatus 始终在响应中返回
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -9,14 +14,25 @@ import { buildChartPayloads } from "@/pipeline/chartBuilder";
 import { enrichRows, toEnrichedCsv } from "@/pipeline/enrich";
 import { buildEvalCaseBundle } from "@/pipeline/evalCaseBuilder";
 import { buildExtendedMetrics } from "@/pipeline/extendedMetrics";
+import { extractIntentSequences } from "@/pipeline/intentExtract";
+import { computeIntentMetrics } from "@/pipeline/intentMetrics";
 import { buildMetricRegistrySnapshot } from "@/pipeline/metricRegistry";
 import { buildObjectiveMetrics } from "@/pipeline/objectiveMetrics";
 import { evaluateScenarioTemplate } from "@/pipeline/scenarioEvaluator";
+import { runSimUserReplay } from "@/pipeline/simUser";
 import { buildSubjectiveMetrics } from "@/pipeline/subjectiveMetrics";
 import { buildSuggestions } from "@/pipeline/suggest";
 import { buildSummaryCards } from "@/pipeline/summary";
 import { getScenarioTemplateById } from "@/scenarios";
-import type { EvaluateResponse, RawChatlogRow, ScenarioEvaluateContext } from "@/types/pipeline";
+import type {
+  DynamicReplayStatus,
+  EvaluateResponse,
+  IntentEvalMetrics,
+  IntentRunLog,
+  IntentSequenceDoc,
+  RawChatlogRow,
+  ScenarioEvaluateContext,
+} from "@/types/pipeline";
 import type { StructuredTaskMetrics } from "@/types/rich-conversation";
 import type { EvalTrace } from "@/types/eval-trace";
 import type { EvaluationProgressEvent, EvaluationStageKey } from "@/types/evaluation-progress";
@@ -38,8 +54,17 @@ export type EvaluateRunOptions = {
   persistArtifact?: boolean;
   artifactBaseName?: string;
   /**
+   * Enable SimUser intent pointer dynamic replay (P1).
+   * Default: false. When false, dynamicReplayStatus="skipped" and intent fields are null.
+   */
+  enableDynamicReplay?: boolean;
+  /**
+   * Agent HTTP endpoint for SimUser to call during dynamic replay.
+   * Required when enableDynamicReplay=true.
+   */
+  agentApiEndpoint?: string;
+  /**
    * Optional inputs for DeepEval-aligned extended metrics.
-   * 提供任意子集即触发对应指标，未提供的指标返回 null。
    */
   extendedInputs?: {
     retrievalContexts?: RetrievalContext[];
@@ -55,7 +80,7 @@ export type EvaluateRunOptions = {
 };
 
 /**
- * Run full enrich → metrics → charts pipeline on raw rows.
+ * Run full enrich → metrics → charts → (optional) dynamic replay pipeline on raw rows.
  * @param rawRows Canonical raw chatlog rows.
  * @param options Execution options.
  * @returns Evaluate response plus optional artifact path.
@@ -66,24 +91,45 @@ export async function runEvaluatePipeline(
 ): Promise<EvaluateResponse & { artifactPath?: string }> {
   const warnings: string[] = [];
   const judgeRequired = options.judgeRequired ?? options.useLlm;
+  const enableDynamicReplay = options.enableDynamicReplay ?? false;
+
   if (!rawRows.every((row) => Boolean(row.timestamp))) {
     warnings.push("检测到缺失 timestamp，部分时序指标已降级。");
   }
   if (judgeRequired && !options.useLlm) {
+    // INTENTIONAL 500 — this throw is the correct product behaviour, NOT a bug.
+    //
+    // When judgeRequired=true the caller has declared "AI scoring is a hard
+    // contract for this run; a rule-based fallback is not acceptable."
+    // Returning a 200 with silently-degraded scores would be worse than
+    // returning an error, because consumers might persist incorrect data.
+    //
+    // Do NOT add a fallback path here.  If you need degraded scoring, call
+    // the API with judgeRequired=false instead.
     throw new Error("LLM Judge 是当前评估的强依赖，但本次请求关闭了 useLlm。");
   }
+  if (enableDynamicReplay && !options.agentApiEndpoint) {
+    throw new Error("enableDynamicReplay=true 时必须提供 agentApiEndpoint。");
+  }
 
-  const { enrichedRows, topicSegments } = await runEvaluateStage(options, "parse", "解析数据", () =>
-    enrichRows(rawRows, options.useLlm, options.runId),
+  // ── Stage: enrich (synchronous) ─────────────────────────────────────────────
+  const { enrichedRows } = runEvaluateStageSync(options, "parse", "解析数据", () =>
+    enrichRows(rawRows),
   );
   const enrichedCsv = toEnrichedCsv(enrichedRows);
   const evalCaseBundle = buildEvalCaseBundle(enrichedRows, options.structuredTaskMetrics, options.trace);
+
+  // ── Stage: objective metrics ─────────────────────────────────────────────────
   const objectiveMetrics = await runEvaluateStage(options, "objective", "客观指标", async () =>
     buildObjectiveMetrics(enrichedRows),
   );
+
+  // ── Stage: subjective metrics ─────────────────────────────────────────────────
   const subjectiveMetrics = await runEvaluateStage(options, "subjective", "主观指标", () =>
     buildSubjectiveMetrics(enrichedRows, options.useLlm, options.runId, { judgeRequired }),
   );
+
+  // ── Scenario evaluation ───────────────────────────────────────────────────────
   const scenarioTemplate = options.scenarioId ? getScenarioTemplateById(options.scenarioId) : null;
   if (options.scenarioId && !scenarioTemplate) {
     warnings.push(`未找到场景模板：${options.scenarioId}，本次按通用评估返回。`);
@@ -95,6 +141,7 @@ export async function runEvaluatePipeline(
         subjectiveMetrics,
       })
     : null;
+
   const metricRegistry = buildMetricRegistrySnapshot({
     objectiveMetrics,
     subjectiveMetrics,
@@ -104,7 +151,8 @@ export async function runEvaluatePipeline(
     scenarioEvaluation,
     scenarioTemplate,
   });
-  // DeepEval-aligned extended metrics. 仅当提供了对应 input 时才会有结果。
+
+  // ── Extended metrics (DeepEval-aligned) ──────────────────────────────────────
   const extendedInputs = options.extendedInputs ?? {};
   const hasAnyExtendedInput = Boolean(
     extendedInputs.retrievalContexts?.length ||
@@ -122,6 +170,7 @@ export async function runEvaluatePipeline(
       : undefined,
   );
 
+  // ── Bad case extraction ───────────────────────────────────────────────────────
   const badCaseAssets = await runEvaluateStage(options, "badcase", "bad case 抽取", async () =>
     buildBadCaseAssets(enrichedRows, objectiveMetrics, subjectiveMetrics, {
       runId: options.runId,
@@ -129,24 +178,80 @@ export async function runEvaluatePipeline(
     }),
   );
 
-  const { charts, suggestions, summaryCards } = await runEvaluateStage(options, "complete", "完成", async () => ({
-    charts: buildChartPayloads(enrichedRows),
-    suggestions: buildSuggestions(enrichedRows, objectiveMetrics, subjectiveMetrics),
-    summaryCards: buildSummaryCards(
-      objectiveMetrics,
-      subjectiveMetrics,
-      new Set(rawRows.map((row) => row.sessionId)).size,
-      rawRows.length,
-      scenarioEvaluation,
-      badCaseAssets.length,
-      options.structuredTaskMetrics,
-    ),
-  }));
+  // ── Charts, suggestions, summary ─────────────────────────────────────────────
+  const { charts, suggestions, summaryCards } = await runEvaluateStage(
+    options,
+    "complete",
+    "图表与建议",
+    async () => ({
+      charts: buildChartPayloads(enrichedRows),
+      suggestions: buildSuggestions(enrichedRows, objectiveMetrics, subjectiveMetrics),
+      summaryCards: buildSummaryCards(
+        objectiveMetrics,
+        subjectiveMetrics,
+        new Set(rawRows.map((row) => row.sessionId)).size,
+        rawRows.length,
+        scenarioEvaluation,
+        badCaseAssets.length,
+        options.structuredTaskMetrics,
+      ),
+    }),
+  );
+
+  // ── Dynamic replay (intent pointer evaluation) ────────────────────────────────
+  let dynamicReplayStatus: DynamicReplayStatus = "skipped";
+  let intentSequences: IntentSequenceDoc[] | null = null;
+  let intentRunLogsBySession: IntentRunLog[][] | null = null;
+  let intentMetrics: IntentEvalMetrics | null = null;
+
+  if (enableDynamicReplay && options.agentApiEndpoint) {
+    try {
+      const extracted = await runEvaluateStage(
+        options,
+        "parse",
+        "意图序列提取",
+        () => extractIntentSequences(enrichedRows, options.useLlm, options.runId),
+      );
+
+      if (extracted.length === 0) {
+        dynamicReplayStatus = "failed";
+        warnings.push("意图序列提取未产出任何结果，dynamic replay 跳过。");
+      } else {
+        intentSequences = extracted;
+        const runLogs = await runEvaluateStage(
+          options,
+          "subjective",
+          "SimUser 回放",
+          () =>
+            runSimUserReplay(extracted, enrichedRows, options.useLlm, {
+              agentApiEndpoint: options.agentApiEndpoint!,
+              runId: options.runId,
+            }),
+        );
+        intentRunLogsBySession = runLogs;
+        intentMetrics = computeIntentMetrics(runLogs, extracted, enrichedRows);
+
+        const successfulSessions = runLogs.filter((s) => s.length > 0).length;
+        dynamicReplayStatus =
+          successfulSessions === extracted.length
+            ? "completed"
+            : successfulSessions > 0
+              ? "partial"
+              : "failed";
+      }
+    } catch (error) {
+      dynamicReplayStatus = "failed";
+      const msg = error instanceof Error ? error.message : String(error);
+      warnings.push(`Dynamic replay 失败：${msg}`);
+      console.error("[evaluateRun] Dynamic replay pipeline failed:", error);
+    }
+  }
 
   if (subjectiveMetrics.status !== "ready" && !judgeRequired) {
     warnings.push("主观评估当前为降级模式（LLM judge 调用失败或未启用）。");
   }
 
+  // ── Artifact persistence ──────────────────────────────────────────────────────
   let artifactPath: string | undefined;
   if (options.persistArtifact ?? Boolean(options.artifactBaseName)) {
     const artifactBaseName = sanitizeArtifactBaseName(options.artifactBaseName ?? options.runId);
@@ -167,7 +272,6 @@ export async function runEvaluatePipeline(
       scenarioContext: options.scenarioContext,
     },
     summaryCards,
-    topicSegments,
     enrichedRows,
     enrichedCsv,
     artifactPath,
@@ -182,19 +286,38 @@ export async function runEvaluatePipeline(
     extendedMetrics,
     charts,
     suggestions,
+    dynamicReplayStatus,
+    intentMetrics,
+    intentSequences,
+    intentRunLogs: intentRunLogsBySession,
   };
 
   return response;
 }
 
 /**
- * Run one named evaluation stage and emit observable progress events.
- *
- * @param options Evaluation options containing optional progress callback.
- * @param stage Stable stage key.
- * @param label Human-readable stage label.
- * @param operation Stage operation.
- * @returns Operation result.
+ * Run a synchronous evaluation stage and emit observable progress events.
+ */
+function runEvaluateStageSync<T>(
+  options: EvaluateRunOptions,
+  stage: EvaluationStageKey,
+  label: string,
+  operation: () => T,
+): T {
+  emitProgress(options, { type: "stage", stage, status: "running", message: `${label}进行中` });
+  try {
+    const result = operation();
+    emitProgress(options, { type: "stage", stage, status: "done", message: `${label}完成` });
+    return result;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    emitProgress(options, { type: "stage", stage, status: "failed", message: `${label}失败`, detail });
+    throw error;
+  }
+}
+
+/**
+ * Run one named async evaluation stage and emit observable progress events.
  */
 async function runEvaluateStage<T>(
   options: EvaluateRunOptions,
@@ -214,25 +337,16 @@ async function runEvaluateStage<T>(
   }
 }
 
-/**
- * Emit a progress event without letting callback failures break evaluation.
- *
- * @param options Evaluation options.
- * @param event Progress event.
- */
 function emitProgress(options: EvaluateRunOptions, event: EvaluationProgressEvent): void {
   try {
     options.onProgress?.(event);
   } catch (error) {
-    console.warn(`[EVALUATE] progress callback failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `[EVALUATE] progress callback failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
-/**
- * Sanitize a file base name for artifact persistence.
- * @param value Requested artifact base name.
- * @returns Safe file base name.
- */
 function sanitizeArtifactBaseName(value: string): string {
   return value.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "") || "enriched-artifact";
 }

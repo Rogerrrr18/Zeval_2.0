@@ -27,7 +27,7 @@ export function BadCasePanel({ items }: BadCasePanelProps) {
             <div>
               <h3>{item.title}</h3>
               <p>
-                session={item.sessionId} · topic={item.topicLabel}
+                session={item.sessionId}
               </p>
             </div>
             <div className={styles.severityBadge}>{Math.round(item.severityScore * 100)}%</div>

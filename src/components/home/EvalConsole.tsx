@@ -1,5 +1,5 @@
 /**
- * @fileoverview Production-oriented evaluation console — 4-step guided flow.
+ * @fileoverview Production-oriented evaluation console with progress-focused workbench flow.
  */
 
 "use client";
@@ -40,6 +40,7 @@ import type { ScenarioEvaluationMetric, ScenarioSyntheticCaseSeed } from "@/type
 import type {
   EvaluateResponse,
   IngestResponse,
+  RawChatlogRow,
   SummaryCard,
   UploadFormat,
 } from "@/types/pipeline";
@@ -54,6 +55,8 @@ type EvalConsoleSessionSnapshot = {
   format: UploadFormat;
   ingestResult: IngestResponse | null;
   evaluateResult: EvaluateResponse | null;
+  persistedRunId?: string;
+  persistedEvaluatePath?: string;
   runState: EvalConsoleRunState;
   processStep: number;
   error: string;
@@ -64,6 +67,17 @@ type EvalConsoleSessionSnapshot = {
   remediationPackage: RemediationPackageSnapshot | null;
   dataMappingPlan: DataMappingPlan | null;
   currentStep: number;
+};
+
+type WorkbenchRecentRun = {
+  runId: string;
+  fileName: string;
+  generatedAt: string;
+  sessions: number;
+  messages: number;
+  savedEvaluatePath?: string;
+  scenarioLabel?: string;
+  warningCount: number;
 };
 
 const PROCESSING_LOGS = [
@@ -85,22 +99,24 @@ const EVALUATION_STAGE_INDEX: Record<EvaluationStageKey, number> = {
 const ALLOWED_EXTENSIONS = new Set(["csv", "json", "jsonl", "txt", "md"]);
 const MAX_UPLOAD_SIZE_MB = 5;
 const EVAL_CONSOLE_SNAPSHOT_KEY = "zeval.workbench.snapshot.v1";
+const EVAL_CONSOLE_RECENT_RUNS_KEY = "zeval.workbench.recentRuns.v1";
 const LEGACY_SESSION_EVAL_CONSOLE_SNAPSHOT_KEY = "zeval:evalConsoleSnapshot:v2";
 const LEGACY_EVAL_CONSOLE_SNAPSHOT_KEY = "zerore:evalConsoleSnapshot:v2";
 const LAST_CUSTOMER_ID_KEY = "zeval:lastCustomerId";
 const LEGACY_LAST_CUSTOMER_ID_KEY = "zerore:lastCustomerId";
+const MAX_LOCAL_SNAPSHOT_BYTES = 1_500_000;
+const MAX_RECENT_RUNS = 8;
 const SGD_SAMPLE_DATASET = {
-  fileName: "sgd-train-mini-package.json",
-  path: "/datasets/sgd-train-mini-package.json",
+  fileName: "sgd-train-tiny-package.json",
+  path: "/datasets/sgd-train-tiny-package.json",
   title: "SGD 任务型对话评估样例",
-  description: "DSTC8 Schema-Guided Dialogue · train/dialogues_001.json · 128 sessions · schema included",
+  description: "DSTC8 Schema-Guided Dialogue · train/dialogues_001.json · 12 sessions · schema included",
 };
 
 const STEPS: StepperStep[] = [
-  { key: "upload", title: "1 · 上传日志", hint: "选择文件 + 业务场景" },
-  { key: "evaluate", title: "2 · 运行评估", hint: "查看指标与 bad case" },
-  { key: "package", title: "3 · 生成调优包", hint: "交给 Claude Code / Codex" },
-  { key: "validate", title: "4 · 保存基线 / 回放", hint: "进入在线评测验证" },
+  { key: "upload", title: "1 · 数据接入", hint: "解析 / 字段映射 / 场景识别" },
+  { key: "evaluate", title: "2 · 质量观测", hint: "指标 / 证据 / 告警" },
+  { key: "package", title: "3 · 修复交付", hint: "调优包 / 案例沉淀 / 归档" },
 ];
 
 /**
@@ -204,6 +220,8 @@ export function EvalConsole() {
   const [badCaseHarvesting, setBadCaseHarvesting] = useState(false);
   const [remediationGenerating, setRemediationGenerating] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
+  const [recordLoading, setRecordLoading] = useState(false);
+  const [recentRuns, setRecentRuns] = useState<WorkbenchRecentRun[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState("");
   const [scenarioOnboardingAnswers, setScenarioOnboardingAnswers] = useState<Record<string, string>>({});
   const [remediationPackage, setRemediationPackage] = useState<RemediationPackageSnapshot | null>(null);
@@ -213,27 +231,31 @@ export function EvalConsole() {
 
   useEffect(() => {
     const lastCustomerId =
-      window.localStorage.getItem(LAST_CUSTOMER_ID_KEY) ??
-      window.localStorage.getItem(LEGACY_LAST_CUSTOMER_ID_KEY);
+      readLocalStorageValue(LAST_CUSTOMER_ID_KEY) ??
+      readLocalStorageValue(LEGACY_LAST_CUSTOMER_ID_KEY);
     if (lastCustomerId) {
       setBaselineCustomerId(lastCustomerId);
     }
+    const storedRecentRuns = readRecentRunsFromStorage();
+    setRecentRuns(storedRecentRuns);
+    void refreshPersistedRunIndex(storedRecentRuns);
 
     const snapshotRaw =
-      window.localStorage.getItem(EVAL_CONSOLE_SNAPSHOT_KEY) ??
-      window.sessionStorage.getItem(LEGACY_SESSION_EVAL_CONSOLE_SNAPSHOT_KEY) ??
-      window.sessionStorage.getItem(LEGACY_EVAL_CONSOLE_SNAPSHOT_KEY);
+      readLocalStorageValue(EVAL_CONSOLE_SNAPSHOT_KEY) ??
+      readSessionStorageValue(LEGACY_SESSION_EVAL_CONSOLE_SNAPSHOT_KEY) ??
+      readSessionStorageValue(LEGACY_EVAL_CONSOLE_SNAPSHOT_KEY);
     if (!snapshotRaw) {
       snapshotHydratedRef.current = true;
       return;
     }
     try {
       const snapshot = JSON.parse(snapshotRaw) as EvalConsoleSessionSnapshot;
+      const persistedRunId = snapshot.persistedRunId ?? snapshot.evaluateResult?.runId;
       setFileName(snapshot.fileName ?? "");
       setFormat(snapshot.format ?? "csv");
       setIngestResult(snapshot.ingestResult ?? null);
       setEvaluateResult(snapshot.evaluateResult ?? null);
-      setRunState(snapshot.runState ?? "idle");
+      setRunState(normalizeHydratedRunState(snapshot));
       setProcessStep(snapshot.processStep ?? 0);
       setError(snapshot.error ?? "");
       setNotice(snapshot.notice ?? "");
@@ -244,9 +266,12 @@ export function EvalConsole() {
       setScenarioOnboardingAnswers(snapshot.scenarioOnboardingAnswers ?? {});
       setRemediationPackage(snapshot.remediationPackage ?? null);
       setDataMappingPlan(snapshot.dataMappingPlan ?? null);
-      setCurrentStep(snapshot.currentStep ?? 0);
+      setCurrentStep(Math.min(snapshot.currentStep ?? 0, STEPS.length - 1));
+      if (!snapshot.evaluateResult && persistedRunId) {
+        void handleRestoreEvaluateRun(persistedRunId, { silent: true });
+      }
     } catch {
-      window.localStorage.removeItem(EVAL_CONSOLE_SNAPSHOT_KEY);
+      removeLocalStorageValue(EVAL_CONSOLE_SNAPSHOT_KEY);
     } finally {
       snapshotHydratedRef.current = true;
     }
@@ -256,7 +281,7 @@ export function EvalConsole() {
     if (!snapshotHydratedRef.current) {
       return;
     }
-    const snapshot: EvalConsoleSessionSnapshot = {
+    const snapshot = buildEvalConsoleSnapshot({
       fileName,
       format,
       ingestResult,
@@ -271,8 +296,8 @@ export function EvalConsole() {
       remediationPackage,
       dataMappingPlan,
       currentStep,
-    };
-    window.localStorage.setItem(EVAL_CONSOLE_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    });
+    writeCompactSnapshot(snapshot);
   }, [
     fileName,
     format,
@@ -327,11 +352,92 @@ export function EvalConsole() {
   ).length;
 
   const completedStep = useMemo(() => {
-    if (remediationPackage) return 3;
+    if (remediationPackage) return 2;
     if (evaluateResult) return 2;
     if (ingestResult) return 1;
     return 0;
   }, [ingestResult, evaluateResult, remediationPackage]);
+
+  /**
+   * Refresh the local recent-run list from server-side eval-runs artifacts.
+   *
+   * @param storedRuns Browser-side run rows that may contain source file names.
+   */
+  async function refreshPersistedRunIndex(storedRuns: WorkbenchRecentRun[]) {
+    try {
+      const response = await fetch(`/api/evaluate-runs?limit=${MAX_RECENT_RUNS}`);
+      const payload = (await response.json()) as { runs?: WorkbenchRecentRun[]; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "评估记录索引读取失败");
+      }
+      const merged = mergeRecentRuns([...(payload.runs ?? []), ...storedRuns]);
+      setRecentRuns(merged);
+      writeRecentRunsToStorage(merged);
+    } catch (requestError) {
+      console.warn("Workbench run index refresh failed", requestError);
+    }
+  }
+
+  /**
+   * Restore one saved evaluate result into the visible workbench state.
+   *
+   * @param runId Saved evaluation run id.
+   * @param options Restore options for hydration-time silent recovery.
+   */
+  async function handleRestoreEvaluateRun(runId: string, options: { silent?: boolean } = {}) {
+    setRecordLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/evaluate-runs/${encodeURIComponent(runId)}`);
+      const payload = (await response.json()) as { evaluate?: EvaluateResponse; error?: string; detail?: string };
+      if (!response.ok || !payload.evaluate) {
+        throw new Error(payload.detail ?? payload.error ?? "读取评估记录失败");
+      }
+      const result = payload.evaluate;
+      const matchedRecord = recentRuns.find((item) => item.runId === result.runId);
+      const restoredFileName = matchedRecord?.fileName || fileName || `${result.runId}.json`;
+      setFileName(restoredFileName);
+      setFormat("json");
+      setIngestResult(buildRestoredIngestResponse(result, restoredFileName));
+      setEvaluateResult(result);
+      setRunState("success");
+      setProcessStep(PROCESSING_LOGS.length - 1);
+      setCurrentStep(1);
+      setShowEvaluationProgress(false);
+      setEvaluationStages(createInitialEvaluationStages());
+      setRemediationPackage(null);
+      setDataMappingPlan(null);
+      setSelectedScenarioId(result.scenarioEvaluation?.scenarioId ?? "");
+      setScenarioOnboardingAnswers({});
+      recordCompletedRun(result, restoredFileName, result.scenarioEvaluation?.displayName ?? selectedScenarioLabel);
+      if (!options.silent) {
+        setNotice(`已恢复评估记录：${result.runId}。`);
+      }
+    } catch (requestError) {
+      setRunState("error");
+      setError(requestError instanceof Error ? requestError.message : "读取评估记录失败");
+    } finally {
+      setRecordLoading(false);
+    }
+  }
+
+  /**
+   * Add one completed run to the browser-side lightweight history.
+   *
+   * @param result Completed evaluate response.
+   * @param sourceFileName Original or restored source file name.
+   * @param scenarioLabel Display label for the active scenario.
+   */
+  function recordCompletedRun(result: EvaluateResponse, sourceFileName: string, scenarioLabel: string) {
+    setRecentRuns((current) => {
+      const next = mergeRecentRuns([
+        projectRecentRun(result, sourceFileName || `${result.runId}.json`, scenarioLabel),
+        ...current,
+      ]);
+      writeRecentRunsToStorage(next);
+      return next;
+    });
+  }
 
   /**
    * Parse and upload one selected file.
@@ -506,10 +612,14 @@ export function EvalConsole() {
         setProcessStep(EVALUATION_STAGE_INDEX[event.stage]);
       });
       setEvaluateResult(result);
+      recordCompletedRun(result, fileName || source.fileName, selectedScenarioLabel);
       setRunState("success");
       setProcessStep(PROCESSING_LOGS.length - 1);
-      setNotice("评估完成，已生成图表、业务 KPI、策略与中间产物。");
-      window.setTimeout(() => setShowEvaluationProgress(false), 900);
+      setNotice(
+        result.meta.savedEvaluatePath
+          ? `评估完成，结果已保存到 ${result.meta.savedEvaluatePath}。`
+          : "评估完成，已生成图表、业务 KPI、策略与中间产物。",
+      );
     } catch (requestError) {
       setRunState("error");
       const message = requestError instanceof Error ? requestError.message : "评估执行失败";
@@ -561,9 +671,9 @@ export function EvalConsole() {
       if (!response.ok) {
         throw new Error(data.detail ?? data.error ?? "保存基线失败");
       }
-      window.localStorage.setItem(LAST_CUSTOMER_ID_KEY, baselineCustomerId.trim());
+      writeLocalStorageValue(LAST_CUSTOMER_ID_KEY, baselineCustomerId.trim());
       setNotice(
-        `已保存工作台基线：customerId=${baselineCustomerId.trim()}，runId=${data.runId ?? evaluateResult.runId}。可前往「在线评测」选择该基线回放。`,
+        `已保存 baseline：customerId=${baselineCustomerId.trim()}，runId=${data.runId ?? evaluateResult.runId}。可在「在线评测」选择该 baseline 回放。`,
       );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "保存基线失败");
@@ -624,7 +734,6 @@ export function EvalConsole() {
             runId: evaluateResult.runId,
             objectiveMetrics: {
               avgResponseGapSec: evaluateResult.objectiveMetrics.avgResponseGapSec,
-              topicSwitchRate: evaluateResult.objectiveMetrics.topicSwitchRate,
               userQuestionRepeatRate: evaluateResult.objectiveMetrics.userQuestionRepeatRate,
               agentResolutionSignalRate: evaluateResult.objectiveMetrics.agentResolutionSignalRate,
               escalationKeywordHitRate: evaluateResult.objectiveMetrics.escalationKeywordHitRate,
@@ -759,12 +868,15 @@ export function EvalConsole() {
               answeredOnboardingCount={answeredOnboardingCount}
               scenarioOnboardingAnswers={scenarioOnboardingAnswers}
               canRunEvaluate={canRunEvaluate}
+              recentRuns={recentRuns}
+              recordLoading={recordLoading}
               onDragOver={handleDragOver}
               onDragLeave={() => setDragActive(false)}
               onDrop={handleDrop}
               onFileInputChange={handleFileInputChange}
               onRunEvaluate={handleRunEvaluate}
               onUseSampleDataset={handleUseSampleDataset}
+              onRestoreRun={(runId) => void handleRestoreEvaluateRun(runId)}
               onScenarioChange={handleScenarioChange}
               onOnboardingAnswerChange={handleOnboardingAnswerChange}
               onAdvance={() => goToStep(1)}
@@ -800,22 +912,13 @@ export function EvalConsole() {
               remediationGenerating={remediationGenerating}
               evaluateResult={evaluateResult}
               badCaseHarvesting={badCaseHarvesting}
-              onGenerate={() => void handleGenerateRemediationPackage()}
-              onHarvest={() => void handleHarvestBadCases()}
-              onBack={() => goToStep(1)}
-              onAdvance={() => goToStep(3)}
-              canAdvance={Boolean(remediationPackage)}
-            />
-          ) : null}
-
-          {currentStep === 3 ? (
-            <StepValidate
-              evaluateResult={evaluateResult}
               baselineCustomerId={baselineCustomerId}
               onBaselineCustomerIdChange={setBaselineCustomerId}
               baselineSaving={baselineSaving}
               onSaveBaseline={() => void handleSaveWorkbenchBaseline()}
-              onBack={() => goToStep(2)}
+              onGenerate={() => void handleGenerateRemediationPackage()}
+              onHarvest={() => void handleHarvestBadCases()}
+              onBack={() => goToStep(1)}
             />
           ) : null}
         </main>
@@ -844,12 +947,15 @@ type StepUploadProps = {
   answeredOnboardingCount: number;
   scenarioOnboardingAnswers: Record<string, string>;
   canRunEvaluate: boolean;
+  recentRuns: WorkbenchRecentRun[];
+  recordLoading: boolean;
   onDragOver: (event: DragEvent<HTMLLabelElement>) => void;
   onDragLeave: () => void;
   onDrop: (event: DragEvent<HTMLLabelElement>) => Promise<void>;
   onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   onRunEvaluate: () => Promise<void>;
   onUseSampleDataset: () => Promise<void>;
+  onRestoreRun: (runId: string) => void;
   onScenarioChange: (scenarioId: string) => void;
   onOnboardingAnswerChange: (questionId: string, value: string) => void;
   onAdvance: () => void;
@@ -861,13 +967,15 @@ function StepUpload(props: StepUploadProps) {
   return (
     <>
       <section className={styles.stepIntro}>
-        <h2>上传一段对话日志</h2>
-        <p>支持 CSV / JSON / JSONL / TXT / MD，单文件 ≤ 5MB。文件会先经过 Data Onboarding Agent 做结构识别与能力检查。</p>
+        <h2>数据接入</h2>
+        <p>把原始日志转成统一消息结构，并在评估前暴露格式、字段、场景和数据量状态。</p>
         <div className={styles.howTo}>
-          <span className={styles.howToTitle}>怎么用</span>
-          <span>① 把对话日志拖到左侧上传区，或点击选择文件。</span>
-          <span>② 选一个业务场景（可选），让评估出 KPI 报告而不只是通用指标。</span>
-          <span>③ 解析完成后，点击上传区右侧「开始评估」，完成后进入结果页。</span>
+          <span className={styles.howToTitle}>观测点</span>
+          <span>文件状态：{props.fileName ? `${props.fileName} · ${props.format.toUpperCase()}` : "等待上传"}。</span>
+          <span>
+            标准化：{props.ingestResult ? `${props.ingestResult.ingestMeta.rows} 行 / ${props.ingestResult.ingestMeta.sessions} 个 session` : "未开始"}。
+          </span>
+          <span>场景上下文：{props.selectedScenarioLabel} · {props.answeredOnboardingCount}/{props.activeOnboardingQuestions.length} 个补充问题已填写。</span>
         </div>
       </section>
 
@@ -904,6 +1012,34 @@ function StepUpload(props: StepUploadProps) {
               </a>
             </div>
           </div>
+          {props.recentRuns.length > 0 ? (
+            <div className={styles.recentRunsBox}>
+              <div className={styles.recentRunsHeader}>
+                <div>
+                  <strong>最近评估记录</strong>
+                  <span>自动保存到 eval-runs，可跨页面恢复。</span>
+                </div>
+                <span>{props.recentRuns.length} 条</span>
+              </div>
+              <div className={styles.recentRunList}>
+                {props.recentRuns.slice(0, 4).map((run) => (
+                  <button
+                    className={styles.recentRunButton}
+                    type="button"
+                    key={run.runId}
+                    disabled={props.recordLoading || props.runState === "running" || props.runState === "ingesting"}
+                    onClick={() => props.onRestoreRun(run.runId)}
+                  >
+                    <span>
+                      <strong>{run.fileName || run.runId}</strong>
+                      <small>{run.sessions} sessions · {run.messages} messages · {formatRecordTime(run.generatedAt)}</small>
+                    </span>
+                    <em>{props.recordLoading ? "读取中" : "恢复"}</em>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <UploadDropzone
             dragActive={props.dragActive}
             uploading={props.runState === "ingesting"}
@@ -1295,12 +1431,12 @@ function StepEvaluate(props: StepEvaluateProps) {
     <>
       <section className={styles.stepIntro}>
         <h2>评估结果</h2>
-        <p>系统已跑完客观指标、主观判定、bad case 抽取、KPI 映射与策略建议。先看核心指标，再切换 tab 看证据。</p>
+        <p>工作台的核心任务是观测质量状态：指标是否可用、证据是否充分、失败点是否能交付给修复流程。</p>
         <div className={styles.howTo}>
-          <span className={styles.howToTitle}>怎么用</span>
-          <span>① 默认 tab 是「核心指标」+ 图表，把握整体水位。</span>
-          <span>② 切到「Bad Case」逐条看证据；切到「目标达成 / 恢复轨迹」看 session 级表现。</span>
-          <span>③ 看完确认有问题需要修复，进入下一步生成调优包。</span>
+          <span className={styles.howToTitle}>观测点</span>
+          <span>链路状态：{getRunStateLabel(props.runState)} · warning {props.warnings.length} 条。</span>
+          <span>失败证据：{props.evaluateResult?.badCaseAssets.length ?? 0} 条 bad case · {props.evaluateResult?.suggestions.length ?? 0} 条建议。</span>
+          <span>主观评估：{props.evaluateResult ? "已输出 goal completion / recovery trace / KPI 映射" : "等待评估完成"}。</span>
         </div>
       </section>
 
@@ -1785,24 +1921,26 @@ type StepPackageProps = {
   remediationGenerating: boolean;
   evaluateResult: EvaluateResponse | null;
   badCaseHarvesting: boolean;
+  baselineCustomerId: string;
+  onBaselineCustomerIdChange: (value: string) => void;
+  baselineSaving: boolean;
+  onSaveBaseline: () => void;
   onGenerate: () => void;
   onHarvest: () => void;
   onBack: () => void;
-  onAdvance: () => void;
-  canAdvance: boolean;
 };
 
 function StepPackage(props: StepPackageProps) {
   return (
     <>
       <section className={styles.stepIntro}>
-        <h2>编译为 Agent 可读调优包</h2>
-        <p>把这次的 bad case + 评估结果打包为 4 个标准文件，可以直接交给 Claude Code / Codex。</p>
+        <h2>修复交付</h2>
+        <p>把本次评估中真正需要处理的失败证据、目标指标与验收门槛收束成可交给开发 Agent 的交付物。</p>
         <div className={styles.howTo}>
-          <span className={styles.howToTitle}>怎么用</span>
-          <span>① 点「生成调优包」一键编译；下方会出现 issue-brief / remediation-spec / badcases / acceptance-gate 四个文件。</span>
-          <span>② 复制 4 个文件内容粘贴到 Claude Code / Codex 的对话里，让它去改 prompt / policy / orchestration / code。</span>
-          <span>③ 同时可以「沉淀到案例池」，把这批 bad case 留作之后回放的回归素材。</span>
+          <span className={styles.howToTitle}>交付状态</span>
+          <span>失败证据：{props.evaluateResult?.badCaseAssets.length ?? 0} 条 bad case 已进入候选集。</span>
+          <span>修复包：{props.remediationPackage ? `${props.remediationPackage.packageId} 已生成` : "等待生成调优包"}。</span>
+          <span>归档动作：结果下载、基线保存和在线评测入口保留为可选操作，不再占用主流程。</span>
         </div>
       </section>
 
@@ -1835,67 +1973,23 @@ function StepPackage(props: StepPackageProps) {
         </div>
       </section>
 
-      <div className={styles.stepNav}>
-        <button type="button" className={styles.primaryOutlineButton} onClick={props.onBack}>
-          ← 上一步
-        </button>
-        <div className={styles.stepNavRight}>
-          <span className={styles.stepHint}>
-            {props.canAdvance ? "调优包就绪，下一步进入回放验证。" : "先生成一份调优包。"}
-          </span>
-          <button
-            type="button"
-            className={styles.primaryOutlineButton}
-            disabled={!props.canAdvance}
-            onClick={props.onAdvance}
-            style={{ background: props.canAdvance ? "#0b0b0b" : undefined, color: props.canAdvance ? "#fff" : undefined }}
-          >
-            下一步：保存基线 / 回放 →
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-/* ---------------- Step 4: Validate ---------------- */
-
-type StepValidateProps = {
-  evaluateResult: EvaluateResponse | null;
-  baselineCustomerId: string;
-  onBaselineCustomerIdChange: (value: string) => void;
-  baselineSaving: boolean;
-  onSaveBaseline: () => void;
-  onBack: () => void;
-};
-
-function StepValidate(props: StepValidateProps) {
-  return (
-    <>
-      <section className={styles.stepIntro}>
-        <h2>保存基线 · 进入回放验证</h2>
-        <p>把这次评估保存为基线，再到「在线评测」用回放把改完的版本和它对比。任何指标回退都不会通过门禁。</p>
-        <div className={styles.howTo}>
-          <span className={styles.howToTitle}>怎么用</span>
-          <span>① 填一个客户 ID（默认 default），点「保存工作台基线」。</span>
-          <span>② 跳到「在线评测」，选刚保存的基线 + 输入新版本回复 API，跑一次回放。</span>
-          <span>③ 系统会输出基线 vs 新版本的多指标对比与 winRate。</span>
-        </div>
-      </section>
-
       <section className={`${styles.panel} ${styles.panelFull}`}>
         <div className={styles.panelHeader}>
           <div>
-            <h2>结果导出 · 基线保存</h2>
-            <p>导出本次评估中间产物，或保存为可回放的基线。</p>
+            <h2>结果归档</h2>
+            <p>保留本次评估的可追溯产物；需要做版本对比时再保存为 baseline。</p>
           </div>
-          <span className={styles.panelMeta}>EXPORT</span>
+          <span className={styles.panelMeta}>ARCHIVE</span>
         </div>
         <div className={styles.exportStack}>
           <div className={styles.exportMeta}>
             <p>当前 Run ID</p>
             <strong>{props.evaluateResult?.runId ?? "--"}</strong>
-            <span>{props.evaluateResult?.artifactPath ?? "评估完成后可下载并复核 artifact"}</span>
+            <span>
+              {props.evaluateResult?.meta.savedEvaluatePath ??
+                props.evaluateResult?.artifactPath ??
+                "评估完成后会自动保存 JSON 结果"}
+            </span>
           </div>
           <div className={styles.exportRow}>
             <button
@@ -1932,10 +2026,14 @@ function StepValidate(props: StepValidateProps) {
               <FeatherIcon name="fileText" />
               下载 JSON 结果
             </button>
+            <Link href="/online-eval" className={styles.secondaryButton}>
+              <FeatherIcon name="activity" />
+              在线评测
+            </Link>
           </div>
           <div className={styles.baselineRow}>
             <label className={styles.baselineLabel}>
-              客户 ID（保存基线）
+              客户 ID（可选 baseline）
               <input
                 className={styles.baselineInput}
                 value={props.baselineCustomerId}
@@ -1949,11 +2047,11 @@ function StepValidate(props: StepValidateProps) {
               disabled={!props.evaluateResult || props.baselineSaving}
               onClick={props.onSaveBaseline}
             >
-              {props.baselineSaving ? "保存中…" : "保存工作台基线"}
+              {props.baselineSaving ? "保存中…" : "保存为 baseline"}
             </button>
           </div>
           <p className={styles.baselineHint}>
-            基线写入 <code>{"mock-chatlog/baselines/<customerId>/"}</code>，可在「在线评测」选择该基线进行回放。
+            baseline 会写入 <code>{"mock-chatlog/baselines/<customerId>/"}</code>，在线评测页可直接选择。
           </p>
         </div>
       </section>
@@ -1962,15 +2060,278 @@ function StepValidate(props: StepValidateProps) {
         <button type="button" className={styles.primaryOutlineButton} onClick={props.onBack}>
           ← 上一步
         </button>
-        <Link href="/online-eval" className={styles.onlineEvalLink}>
-          前往在线评测 →
-        </Link>
+        <span className={styles.stepHint}>
+          {props.remediationPackage ? "主流程已完成，后续验证从在线评测入口进入。" : "生成调优包后，本次工作台流程即完成。"}
+        </span>
       </div>
     </>
   );
 }
 
 /* ---------------- helpers ---------------- */
+
+/**
+ * Build a browser-safe workbench snapshot that keeps large run payloads out of localStorage.
+ *
+ * @param input Current workbench state.
+ * @returns Compact snapshot plus persisted run pointers.
+ */
+function buildEvalConsoleSnapshot(input: EvalConsoleSessionSnapshot): EvalConsoleSessionSnapshot {
+  return {
+    ...input,
+    ingestResult: isJsonWithinLimit(input.ingestResult, MAX_LOCAL_SNAPSHOT_BYTES) ? input.ingestResult : null,
+    evaluateResult: isJsonWithinLimit(input.evaluateResult, MAX_LOCAL_SNAPSHOT_BYTES) ? input.evaluateResult : null,
+    persistedRunId: input.evaluateResult?.runId ?? input.persistedRunId,
+    persistedEvaluatePath:
+      input.evaluateResult?.meta.savedEvaluatePath ?? input.evaluateResult?.artifactPath ?? input.persistedEvaluatePath,
+  };
+}
+
+/**
+ * Convert stale in-flight snapshot states into stable visible states after navigation.
+ *
+ * @param snapshot Stored workbench snapshot.
+ * @returns Hydration-safe run state.
+ */
+function normalizeHydratedRunState(snapshot: EvalConsoleSessionSnapshot): EvalConsoleRunState {
+  if (snapshot.runState === "running" || snapshot.runState === "ingesting") {
+    if (snapshot.evaluateResult) {
+      return "success";
+    }
+    if (snapshot.ingestResult) {
+      return "ready";
+    }
+    return "idle";
+  }
+  return snapshot.runState ?? "idle";
+}
+
+/**
+ * Persist the compact workbench snapshot and fall back to pointer-only state on quota errors.
+ *
+ * @param snapshot Compact snapshot candidate.
+ */
+function writeCompactSnapshot(snapshot: EvalConsoleSessionSnapshot) {
+  const serialized = JSON.stringify(snapshot);
+  if (writeLocalStorageValue(EVAL_CONSOLE_SNAPSHOT_KEY, serialized)) {
+    return;
+  }
+  const pointerOnlySnapshot: EvalConsoleSessionSnapshot = {
+    ...snapshot,
+    ingestResult: null,
+    evaluateResult: null,
+  };
+  writeLocalStorageValue(EVAL_CONSOLE_SNAPSHOT_KEY, JSON.stringify(pointerOnlySnapshot));
+}
+
+/**
+ * Check whether a value can fit within the configured localStorage snapshot budget.
+ *
+ * @param value JSON-serializable value.
+ * @param maxBytes Approximate byte budget.
+ * @returns True when the value is empty or small enough to store locally.
+ */
+function isJsonWithinLimit(value: unknown, maxBytes: number): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  try {
+    return JSON.stringify(value).length <= maxBytes;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a localStorage key without breaking hydration on browser storage failures.
+ *
+ * @param key Storage key.
+ * @returns Stored value or null.
+ */
+function readLocalStorageValue(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    console.warn(`Workbench localStorage read failed: ${key}`, error);
+    return null;
+  }
+}
+
+/**
+ * Read a sessionStorage key without blocking state hydration.
+ *
+ * @param key Storage key.
+ * @returns Stored value or null.
+ */
+function readSessionStorageValue(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch (error) {
+    console.warn(`Workbench sessionStorage read failed: ${key}`, error);
+    return null;
+  }
+}
+
+/**
+ * Write a localStorage value and report whether it succeeded.
+ *
+ * @param key Storage key.
+ * @param value Serialized value.
+ * @returns True when the write succeeds.
+ */
+function writeLocalStorageValue(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`Workbench localStorage write failed: ${key}`, error);
+    return false;
+  }
+}
+
+/**
+ * Remove one localStorage key without surfacing browser storage errors to users.
+ *
+ * @param key Storage key.
+ */
+function removeLocalStorageValue(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(`Workbench localStorage remove failed: ${key}`, error);
+  }
+}
+
+/**
+ * Read browser-side recent evaluate runs.
+ *
+ * @returns Lightweight run rows or an empty list when unavailable.
+ */
+function readRecentRunsFromStorage(): WorkbenchRecentRun[] {
+  const raw = readLocalStorageValue(EVAL_CONSOLE_RECENT_RUNS_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as WorkbenchRecentRun[];
+    return Array.isArray(parsed) ? mergeRecentRuns(parsed) : [];
+  } catch {
+    removeLocalStorageValue(EVAL_CONSOLE_RECENT_RUNS_KEY);
+    return [];
+  }
+}
+
+/**
+ * Persist browser-side recent evaluate runs.
+ *
+ * @param runs Lightweight run rows.
+ */
+function writeRecentRunsToStorage(runs: WorkbenchRecentRun[]) {
+  writeLocalStorageValue(EVAL_CONSOLE_RECENT_RUNS_KEY, JSON.stringify(runs.slice(0, MAX_RECENT_RUNS)));
+}
+
+/**
+ * Merge run rows by run id and keep the newest rows first.
+ *
+ * @param runs Candidate run rows from server and browser storage.
+ * @returns De-duplicated recent run rows.
+ */
+function mergeRecentRuns(runs: WorkbenchRecentRun[]): WorkbenchRecentRun[] {
+  const byRunId = new Map<string, WorkbenchRecentRun>();
+  for (const run of runs) {
+    if (!run?.runId) {
+      continue;
+    }
+    const existing = byRunId.get(run.runId);
+    byRunId.set(run.runId, {
+      runId: run.runId,
+      fileName: run.fileName || existing?.fileName || run.runId,
+      generatedAt: run.generatedAt || existing?.generatedAt || new Date(0).toISOString(),
+      sessions: run.sessions ?? existing?.sessions ?? 0,
+      messages: run.messages ?? existing?.messages ?? 0,
+      savedEvaluatePath: run.savedEvaluatePath ?? existing?.savedEvaluatePath,
+      scenarioLabel: run.scenarioLabel ?? existing?.scenarioLabel,
+      warningCount: run.warningCount ?? existing?.warningCount ?? 0,
+    });
+  }
+  return [...byRunId.values()]
+    .sort((left, right) => Date.parse(right.generatedAt) - Date.parse(left.generatedAt))
+    .slice(0, MAX_RECENT_RUNS);
+}
+
+/**
+ * Project a completed evaluate response into local recent-run metadata.
+ *
+ * @param result Completed evaluate response.
+ * @param fileName Source file name shown in the record list.
+ * @param scenarioLabel Active scenario label.
+ * @returns Lightweight run row.
+ */
+function projectRecentRun(result: EvaluateResponse, fileName: string, scenarioLabel: string): WorkbenchRecentRun {
+  return {
+    runId: result.runId,
+    fileName,
+    generatedAt: result.meta.generatedAt,
+    sessions: result.meta.sessions,
+    messages: result.meta.messages,
+    savedEvaluatePath: result.meta.savedEvaluatePath ?? result.artifactPath,
+    scenarioLabel: result.scenarioEvaluation?.displayName ?? scenarioLabel,
+    warningCount: result.meta.warnings.length,
+  };
+}
+
+/**
+ * Rebuild a minimal ingest response from a saved evaluate result for baseline saving and preview.
+ *
+ * @param result Saved evaluate response.
+ * @param fileName Restored file name.
+ * @returns Ingest response reconstructed from enriched rows.
+ */
+function buildRestoredIngestResponse(result: EvaluateResponse, fileName: string): IngestResponse {
+  const rawRows: RawChatlogRow[] = result.enrichedRows.map((row) => ({
+    sessionId: row.sessionId,
+    timestamp: row.timestamp,
+    role: row.role,
+    content: row.content,
+  }));
+  return {
+    format: "json",
+    fileName,
+    rawRows,
+    canonicalCsv: result.enrichedCsv,
+    previewTop20: previewCsvLines(result.enrichedCsv, 21),
+    structuredTaskMetrics: result.structuredTaskMetrics,
+    ingestMeta: {
+      sessions: result.meta.sessions,
+      rows: result.meta.messages,
+      hasTimestamp: result.meta.hasTimestamp,
+      organizationId: result.meta.organizationId,
+      projectId: result.meta.projectId,
+      workspaceId: result.meta.workspaceId,
+      piiRedaction: result.meta.piiRedaction,
+    },
+    warnings: result.meta.warnings,
+  };
+}
+
+/**
+ * Format a run timestamp for the compact record list.
+ *
+ * @param value ISO timestamp.
+ * @returns Localized timestamp or the original value when parsing fails.
+ */
+function formatRecordTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function getRunStateLabel(runState: EvalConsoleRunState): string {
   if (runState === "ingesting") return "日志解析中";
@@ -1982,23 +2343,19 @@ function getRunStateLabel(runState: EvalConsoleRunState): string {
 }
 
 function getStepHeroTitle(step: number): string {
-  if (step === 0) return "上传一段对话日志";
-  if (step === 1) return "查看评估结果";
-  if (step === 2) return "生成调优包";
-  return "保存基线 / 回放验证";
+  if (step === 0) return "接入对话数据";
+  if (step === 1) return "观测质量信号";
+  return "交付修复资产";
 }
 
 function getStepHeroCopy(step: number): string {
   if (step === 0) {
-    return "上传 CSV / JSON / TXT / MD 对话日志，选好业务场景后即可开始评估。系统会自动解析、按 session 分组并预览前 20 行。";
+    return "上传 CSV / JSON / TXT / MD 对话日志，系统会自动解析、按 session 分组，并把字段映射与数据质量状态提前暴露出来。";
   }
   if (step === 1) {
-    return "看核心指标、bad case、目标达成、恢复轨迹与图表。所有结论都带证据，不是单一打分。";
+    return "用核心指标、bad case、目标达成、恢复轨迹与业务 KPI 看清当前质量水位。所有结论都带证据，不是单一打分。";
   }
-  if (step === 2) {
-    return "把这批 bad case 编译为 4 个标准文件，直接交给 Claude Code / Codex 修 prompt / policy / orchestration。";
-  }
-  return "把当前评估保存为基线，跳到在线评测，用回放把改后的版本和它做多指标对比。";
+  return "把失败证据、目标指标与验收门槛编译成调优包；导出、baseline 与在线评测保留为结果区动作。";
 }
 
 function pickActiveOnboardingAnswers(

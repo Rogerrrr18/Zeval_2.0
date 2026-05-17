@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/shell";
 import styles from "./copilotConsole.module.css";
 
@@ -53,6 +53,13 @@ const EMPTY_TURNS: ChatTurn[] = [];
 const SAMPLE_PROMPT_BUILT_IN =
   "我有一份客服对话日志，请帮我跑评估，告诉我哪里需要优化。";
 
+type MarkdownBlock =
+  | { kind: "heading"; level: 2 | 3 | 4; text: string }
+  | { kind: "paragraph"; lines: string[] }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "code"; language: string; content: string }
+  | { kind: "quote"; lines: string[] };
+
 /**
  * Render the Eval Chat console.
  *
@@ -67,7 +74,7 @@ export function CopilotConsole() {
   const activeChannel = channels.find((channel) => channel.id === activeChannelId) ?? channels[0] ?? null;
   const turns = activeChannel?.turns ?? EMPTY_TURNS;
   const input = activeChannel?.inputDraft ?? "";
-  const scenarioId = activeChannel?.scenarioId ?? "toB-customer-support";
+  const scenarioId = activeChannel?.scenarioId ?? "";
   const attachedRows = activeChannel?.attachedRows ?? null;
   const attachedFileName = activeChannel?.attachedFileName ?? null;
 
@@ -441,7 +448,7 @@ export function CopilotConsole() {
           <footer className={styles.composer}>
             <div className={styles.composerMeta}>
               <label className={styles.scenarioLabel}>
-                场景：
+                评估模板：
                 <select
                   className={styles.scenarioSelect}
                   value={scenarioId}
@@ -452,8 +459,8 @@ export function CopilotConsole() {
                     }));
                   }}
                 >
-                  <option value="toB-customer-support">ToB 客服</option>
                   <option value="">通用</option>
+                  <option value="toB-customer-support">ToB 客服</option>
                 </select>
               </label>
               <label className={styles.attachLabel}>
@@ -532,7 +539,7 @@ function createChatChannel(): ChatChannel {
     updatedAt: now,
     turns: [],
     inputDraft: "",
-    scenarioId: "toB-customer-support",
+    scenarioId: "",
     attachedRows: null,
     attachedFileName: null,
   };
@@ -590,7 +597,7 @@ function readStoredChannels(): ChatChannel[] {
           updatedAt: typeof channel.updatedAt === "string" ? channel.updatedAt : new Date().toISOString(),
           turns: channel.turns,
           inputDraft: typeof channel.inputDraft === "string" ? channel.inputDraft : "",
-          scenarioId: typeof channel.scenarioId === "string" ? channel.scenarioId : "toB-customer-support",
+          scenarioId: typeof channel.scenarioId === "string" ? channel.scenarioId : "",
           attachedRows: Array.isArray(channel.attachedRows) ? channel.attachedRows : null,
           attachedFileName: typeof channel.attachedFileName === "string" ? channel.attachedFileName : null,
         },
@@ -683,7 +690,7 @@ function TurnView(props: {
       return (
         <div className={`${styles.bubble} ${styles.bubbleUser}`}>
           <div className={styles.bubbleRole}>你</div>
-          <div className={styles.bubbleBody}>{turn.text}</div>
+          <div className={styles.bubbleBody}>{renderMarkdownMessage(turn.text)}</div>
         </div>
       );
     case "plan":
@@ -717,7 +724,7 @@ function TurnView(props: {
       return (
         <div className={`${styles.bubble} ${styles.bubbleAgent}`}>
           <div className={styles.bubbleRole}>Chat</div>
-          <div className={styles.bubbleBody}>{turn.message}</div>
+          <div className={styles.bubbleBody}>{renderMarkdownMessage(turn.message)}</div>
           {turn.next_actions && turn.next_actions.length > 0 ? (
             <div className={styles.nextActions}>
               {turn.next_actions.map((a, i) => (
@@ -732,6 +739,189 @@ function TurnView(props: {
     case "error":
       return <div className={styles.errorRow}>⚠ {turn.message}</div>;
   }
+}
+
+/**
+ * Render a safe, lightweight Markdown subset for chat messages.
+ * @param text Raw assistant or user message.
+ * @returns React nodes for readable Markdown blocks.
+ */
+function renderMarkdownMessage(text: string): ReactNode {
+  const blocks = parseMarkdownBlocks(text);
+  return (
+    <div className={styles.markdown}>
+      {blocks.map((block, index) => {
+        if (block.kind === "heading") {
+          const HeadingTag = block.level === 2 ? "h2" : block.level === 3 ? "h3" : "h4";
+          return <HeadingTag key={index}>{renderInlineMarkdown(block.text)}</HeadingTag>;
+        }
+        if (block.kind === "list") {
+          const ListTag = block.ordered ? "ol" : "ul";
+          return (
+            <ListTag key={index}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
+              ))}
+            </ListTag>
+          );
+        }
+        if (block.kind === "code") {
+          return (
+            <pre key={index} className={styles.markdownCode}>
+              {block.language ? <span>{block.language}</span> : null}
+              <code>{block.content}</code>
+            </pre>
+          );
+        }
+        if (block.kind === "quote") {
+          return <blockquote key={index}>{renderMarkdownLines(block.lines, `quote-${index}`)}</blockquote>;
+        }
+        return <p key={index}>{renderMarkdownLines(block.lines, `paragraph-${index}`)}</p>;
+      })}
+    </div>
+  );
+}
+
+/**
+ * Parse a compact Markdown subset into display blocks.
+ * @param text Raw message text.
+ * @returns Parsed Markdown blocks.
+ */
+function parseMarkdownBlocks(text: string): MarkdownBlock[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^```([\w-]*)\s*$/);
+    if (fence) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push({ kind: "code", language: fence[1] ?? "", content: codeLines.join("\n") });
+      continue;
+    }
+
+    const heading = line.match(/^(#{2,4})\s+(.+)$/);
+    if (heading) {
+      blocks.push({ kind: "heading", level: heading[1].length as 2 | 3 | 4, text: heading[2].trim() });
+      index += 1;
+      continue;
+    }
+
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      const quoteLines: string[] = [];
+      while (index < lines.length) {
+        const quoteLine = lines[index].match(/^>\s?(.*)$/);
+        if (!quoteLine) break;
+        quoteLines.push(quoteLine[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "quote", lines: quoteLines });
+      continue;
+    }
+
+    const list = parseListLine(line);
+    if (list) {
+      const items: string[] = [];
+      const ordered = list.ordered;
+      while (index < lines.length) {
+        const parsed = parseListLine(lines[index]);
+        if (!parsed || parsed.ordered !== ordered) break;
+        items.push(parsed.text);
+        index += 1;
+      }
+      blocks.push({ kind: "list", ordered, items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length && lines[index].trim()) {
+      if (/^```/.test(lines[index]) || /^(#{2,4})\s+/.test(lines[index]) || /^>\s?/.test(lines[index]) || parseListLine(lines[index])) {
+        break;
+      }
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push({ kind: "paragraph", lines: paragraphLines });
+  }
+
+  return blocks.length > 0 ? blocks : [{ kind: "paragraph", lines: [text] }];
+}
+
+/**
+ * Parse one Markdown list line.
+ * @param line Raw line.
+ * @returns List metadata, or null when the line is not a list item.
+ */
+function parseListLine(line: string): { ordered: boolean; text: string } | null {
+  const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+  if (unordered) {
+    return { ordered: false, text: unordered[1].trim() };
+  }
+  const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+  if (ordered) {
+    return { ordered: true, text: ordered[1].trim() };
+  }
+  return null;
+}
+
+/**
+ * Render inline code and bold markers without using unsafe HTML.
+ * @param text Raw inline Markdown.
+ * @returns Inline React nodes.
+ */
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={`${match.index}-code`}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<strong key={`${match.index}-strong`}>{token.slice(2, -2)}</strong>);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return nodes;
+}
+
+/**
+ * Render multiple inline Markdown lines separated by explicit breaks.
+ * @param lines Raw text lines.
+ * @param keyPrefix Stable key prefix for the block.
+ * @returns Inline nodes with line breaks.
+ */
+function renderMarkdownLines(lines: string[], keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  lines.forEach((line, lineIndex) => {
+    if (lineIndex > 0) {
+      nodes.push(<br key={`${keyPrefix}-br-${lineIndex}`} />);
+    }
+    renderInlineMarkdown(line).forEach((node, nodeIndex) => {
+      nodes.push(<span key={`${keyPrefix}-${lineIndex}-${nodeIndex}`}>{node}</span>);
+    });
+  });
+  return nodes;
 }
 
 /**

@@ -76,11 +76,9 @@ export async function harvestBadCasesToDataset(params: {
       caseSetType: "badcase",
       source: params.source ?? "auto_tp",
       sessionId: asset.sessionId,
-      topicSegmentId: asset.topicSegmentId,
-      topicIndex: asset.topicIndex,
-      topicRange: asset.topicRange,
-      topicLabel: asset.topicLabel,
-      topicSummary: asset.topicSummary,
+      topicSegmentId: asset.sessionId,
+      topicLabel: "",
+      topicSummary: "",
       normalizedTranscriptHash: asset.normalizedTranscriptHash,
       duplicateGroupKey: asset.duplicateGroupKey,
       baselineVersion,
@@ -126,7 +124,6 @@ function buildBaselineRecord(
   const objectivePenalty = [
     asset.tags.includes("question_repeat") ? 0.2 : 0,
     asset.tags.includes("escalation_keyword") ? 0.24 : 0,
-    asset.tags.includes("off_topic_shift") ? 0.18 : 0,
     asset.tags.includes("long_response_gap") ? 0.12 : 0,
   ].reduce((sum, item) => sum + item, 0);
   const subjectivePenalty = [
@@ -135,7 +132,6 @@ function buildBaselineRecord(
     asset.tags.includes("goal_unclear") ? 0.1 : 0,
     asset.tags.includes("recovery_failed") ? 0.24 : 0,
     asset.tags.includes("understanding_barrier") ? 0.16 : 0,
-    asset.tags.includes("emotion_drop") ? 0.14 : 0,
   ].reduce((sum, item) => sum + item, 0);
   const baselineObjectiveScore = roundScore(1 - Math.min(1, objectivePenalty));
   const baselineSubjectiveScore = roundScore(1 - Math.min(1, subjectivePenalty));

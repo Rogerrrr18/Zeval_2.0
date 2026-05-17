@@ -13,7 +13,7 @@ import type { EvaluationProgressEvent } from "@/types/evaluation-progress";
 /**
  * Execute MVP evaluation chain from raw rows.
  * @param request Next.js request object.
- * @returns Unified evaluate payload with enriched rows, metrics and charts.
+ * @returns Unified evaluate payload with enriched rows, metrics, charts, and (optionally) dynamic replay results.
  */
 export async function POST(request: Request) {
   try {
@@ -28,14 +28,28 @@ export async function POST(request: Request) {
       );
     }
     const body = parsedBody.data;
+
+    // Validate dynamic replay prerequisites
+    if (body.enableDynamicReplay && !body.agentApiEndpoint) {
+      return NextResponse.json(
+        { error: "enableDynamicReplay=true 时必须提供 agentApiEndpoint。" },
+        { status: 400 },
+      );
+    }
+
     const redaction = redactRawRows(body.rawRows);
     const rawRows = redaction.rows;
     const runId = body.runId ?? `run_${Date.now()}`;
     const useLlm = body.useLlm ?? true;
     const judgeRequired = body.judgeRequired ?? true;
+
     if (judgeRequired && !useLlm) {
-      return NextResponse.json({ error: "当前产品链路要求 LLM Judge 必须开启，不能以降级模式运行。" }, { status: 400 });
+      return NextResponse.json(
+        { error: "当前产品链路要求 LLM Judge 必须开启，不能以降级模式运行。" },
+        { status: 400 },
+      );
     }
+
     if (streamMode) {
       return streamEvaluateRun({
         context,
@@ -47,6 +61,7 @@ export async function POST(request: Request) {
         judgeRequired,
       });
     }
+
     if (body.asyncMode) {
       const job = await enqueueLocalJob({
         workspaceId: context.workspaceId,
@@ -67,7 +82,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ queued: true, job, runId }, { status: 202 });
     }
 
-    console.info(`[EVALUATE] runId=${runId} START messages=${rawRows.length} useLlm=${useLlm}`);
+    console.info(`[EVALUATE] runId=${runId} START messages=${rawRows.length} useLlm=${useLlm} dynamicReplay=${body.enableDynamicReplay}`);
     const response = await runEvaluatePipeline(rawRows, {
       useLlm,
       judgeRequired,
@@ -84,29 +99,33 @@ export async function POST(request: Request) {
       persistArtifact: body.persistArtifact ?? Boolean(body.artifactBaseName),
       artifactBaseName: body.artifactBaseName,
       extendedInputs: body.extendedInputs,
+      enableDynamicReplay: body.enableDynamicReplay,
+      agentApiEndpoint: body.agentApiEndpoint,
     });
     response.meta.organizationId = context.organizationId;
     response.meta.projectId = context.projectId;
     response.meta.workspaceId = context.workspaceId;
     response.meta.piiRedaction = redaction.report;
+
     if (redaction.report.redactedFields > 0) {
       response.meta.warnings.push(
         `PII 脱敏已处理 ${redaction.report.redactedFields} 处：${redaction.report.categories.join(", ")}。`,
       );
     }
+
     await persistCompletedEvaluateResult(response);
+
     try {
       const projection = buildEvaluationProjection(response, {
-        organizationId: context.organizationId,
-        projectId: context.projectId,
-        workspaceId: context.workspaceId,
+        projectId: context.projectId ?? context.workspaceId,
         runId,
         useLlm,
+        enableDynamicReplay: body.enableDynamicReplay,
       });
       const database = await createZeroreDatabase();
       await persistEvaluationProjection(database, projection);
       console.info(
-        `[EVALUATE] runId=${runId} PROJECTION records=${projection.dbRecords.length} evidence=${projection.summary.evidenceSpans}`,
+        `[EVALUATE] runId=${runId} PROJECTION records=${projection.dbRecords.length} intentSeqs=${projection.summary.intentSequences} evidence=${projection.summary.evidenceSpans}`,
       );
     } catch (projectionError) {
       const projectionMessage =
@@ -115,7 +134,7 @@ export async function POST(request: Request) {
       console.warn(`[EVALUATE] runId=${runId} PROJECTION_FAILED ${projectionMessage}`);
     }
 
-    console.info(`[EVALUATE] runId=${runId} DONE warnings=${response.meta.warnings.length}`);
+    console.info(`[EVALUATE] runId=${runId} DONE dynamicReplayStatus=${response.dynamicReplayStatus} warnings=${response.meta.warnings.length}`);
     return NextResponse.json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : "evaluate 未知错误";
@@ -125,9 +144,6 @@ export async function POST(request: Request) {
 
 /**
  * Stream a synchronous evaluation run as SSE stage events followed by result.
- *
- * @param input Evaluation inputs already validated by the route.
- * @returns SSE response.
  */
 function streamEvaluateRun(input: {
   context: ReturnType<typeof getZeroreRequestContext>;
@@ -147,7 +163,7 @@ function streamEvaluateRun(input: {
       const onProgress = (event: EvaluationProgressEvent) => send(event);
       try {
         console.info(
-          `[EVALUATE] runId=${input.runId} STREAM_START messages=${input.rawRows.length} useLlm=${input.useLlm}`,
+          `[EVALUATE] runId=${input.runId} STREAM_START messages=${input.rawRows.length} useLlm=${input.useLlm} dynamicReplay=${input.body.enableDynamicReplay}`,
         );
         const response = await runEvaluatePipeline(input.rawRows, {
           useLlm: input.useLlm,
@@ -165,6 +181,8 @@ function streamEvaluateRun(input: {
           persistArtifact: input.body.persistArtifact ?? Boolean(input.body.artifactBaseName),
           artifactBaseName: input.body.artifactBaseName,
           extendedInputs: input.body.extendedInputs,
+          enableDynamicReplay: input.body.enableDynamicReplay,
+          agentApiEndpoint: input.body.agentApiEndpoint,
           onProgress,
         });
         response.meta.organizationId = input.context.organizationId;
@@ -179,11 +197,10 @@ function streamEvaluateRun(input: {
         await persistCompletedEvaluateResult(response);
         try {
           const projection = buildEvaluationProjection(response, {
-            organizationId: input.context.organizationId,
-            projectId: input.context.projectId,
-            workspaceId: input.context.workspaceId,
+            projectId: input.context.projectId ?? input.context.workspaceId,
             runId: input.runId,
             useLlm: input.useLlm,
+            enableDynamicReplay: input.body.enableDynamicReplay,
           });
           const database = await createZeroreDatabase();
           await persistEvaluationProjection(database, projection);
@@ -216,12 +233,9 @@ function streamEvaluateRun(input: {
   });
 }
 
-/**
- * Persist a completed evaluate response and surface write failures as warnings.
- *
- * @param response Completed evaluate response.
- */
-async function persistCompletedEvaluateResult(response: Awaited<ReturnType<typeof runEvaluatePipeline>>): Promise<void> {
+async function persistCompletedEvaluateResult(
+  response: Awaited<ReturnType<typeof runEvaluatePipeline>>,
+): Promise<void> {
   try {
     const savedPath = await persistEvaluateResult(response);
     console.info(`[EVALUATE] runId=${response.runId} SAVED path=${savedPath}`);

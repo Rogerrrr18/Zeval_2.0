@@ -63,9 +63,7 @@ async function runEvaluateJob(job: QueueJobRecord): Promise<unknown> {
   response.meta.piiRedaction = redaction.report;
 
   const projection = buildEvaluationProjection(response, {
-    organizationId: job.organizationId,
-    projectId: job.projectId,
-    workspaceId: job.workspaceId,
+    projectId: job.projectId ?? job.workspaceId,
     runId,
     useLlm,
   });

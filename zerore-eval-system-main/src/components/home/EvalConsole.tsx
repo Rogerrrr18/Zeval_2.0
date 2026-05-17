@@ -734,7 +734,6 @@ export function EvalConsole() {
             runId: evaluateResult.runId,
             objectiveMetrics: {
               avgResponseGapSec: evaluateResult.objectiveMetrics.avgResponseGapSec,
-              topicSwitchRate: evaluateResult.objectiveMetrics.topicSwitchRate,
               userQuestionRepeatRate: evaluateResult.objectiveMetrics.userQuestionRepeatRate,
               agentResolutionSignalRate: evaluateResult.objectiveMetrics.agentResolutionSignalRate,
               escalationKeywordHitRate: evaluateResult.objectiveMetrics.escalationKeywordHitRate,

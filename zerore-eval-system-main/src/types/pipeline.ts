@@ -1,5 +1,8 @@
 /**
  * @fileoverview Shared contracts for raw, enriched and presentation layers.
+ *
+ * P1 重构：已移除 TopicSegment / EmotionPolarity / EmotionIntensity 等
+ * topic 切分与情绪链路类型。会话结构化单元统一由 IntentSequenceDoc 承担。
  */
 
 import type { ScenarioEvaluation } from "@/types/scenario";
@@ -44,120 +47,26 @@ export type NormalizedChatlogRow = RawChatlogRow & {
 export type FieldSource = "raw" | "rule" | "llm" | "inferred" | "fallback";
 
 /**
- * Segment-level emotion polarity categories.
- */
-export type EmotionPolarity = "positive" | "neutral" | "negative" | "mixed";
-
-/**
- * Segment-level emotion intensity categories.
- */
-export type EmotionIntensity = "low" | "medium" | "high";
-
-/**
- * Structured emotion factor weights used by the local scoring function.
- */
-export type EmotionScoreFactors = {
-  valenceWeight: number;
-  lengthWeight: number;
-  styleWeight: number;
-  gapWeight: number;
-  recoveryWeight: number;
-  riskPenalty: number;
-};
-
-/**
- * Structured topic segment built during preprocessing.
- */
-export type TopicSegment = {
-  sessionId: string;
-  topicSegmentId: string;
-  topicSegmentIndex: number;
-  topicLabel: string;
-  topicSummary: string;
-  topicSource: FieldSource;
-  topicConfidence: number;
-  startTurn: number;
-  endTurn: number;
-  messageCount: number;
-  emotionPolarity: EmotionPolarity;
-  emotionIntensity: EmotionIntensity;
-  emotionLabel: string;
-  emotionBaseScore: number;
-  emotionScore: number;
-  emotionEvidence: string;
-  emotionSource: FieldSource;
-  emotionConfidence: number;
-  emotionValenceWeight: number;
-  emotionLengthWeight: number;
-  emotionStyleWeight: number;
-  emotionGapWeight: number;
-  emotionRecoveryWeight: number;
-  emotionRiskPenalty: number;
-};
-
-/**
- * Supported implicit signal identifiers.
- */
-export type ImplicitSignalKey =
-  | "interestDeclineRisk"
-  | "understandingBarrierRisk"
-  | "emotionRecoveryFailureRisk";
-
-/**
- * Structured implicit signal extracted from enriched behavior patterns.
- */
-export type ImplicitSignal = {
-  signalKey: ImplicitSignalKey;
-  score: number;
-  severity: "low" | "medium" | "high";
-  triggeredRules: string[];
-  reason: string;
-  evidence: string;
-  evidenceTurnRange: string;
-  confidence: number;
-};
-
-/**
- * Enriched row used as the canonical intermediate artifact.
+ * Enriched row — minimal row-level signals after topic/emotion removal.
+ * Only deterministic, LLM-free fields remain here.
  */
 export type EnrichedChatlogRow = NormalizedChatlogRow & {
-  topic: string;
-  topicSegmentId: string;
-  topicSegmentIndex: number;
-  topicSummary: string;
-  topicStartTurn: number;
-  topicEndTurn: number;
-  topicSource: FieldSource;
-  topicConfidence: number;
-  emotionPolarity: EmotionPolarity;
-  emotionIntensity: EmotionIntensity;
-  emotionLabel: string;
-  emotionBaseScore: number;
-  emotionScore: number;
-  emotionEvidence: string;
-  emotionSource: FieldSource;
-  emotionConfidence: number;
-  emotionValenceWeight: number;
-  emotionLengthWeight: number;
-  emotionStyleWeight: number;
-  emotionGapWeight: number;
-  emotionRecoveryWeight: number;
-  emotionRiskPenalty: number;
+  /** Seconds since the previous message in this session (null if no prior message). */
   responseGapSec: number | null;
+  /** True if this is the last assistant turn (possible dropoff signal). */
   isDropoffTurn: boolean;
+  /** True if the message ends with a question mark. */
   isQuestion: boolean;
-  isTopicSwitch: boolean;
+  /** Estimated token count (content.length / 1.6, clamped to ≥ 1). */
   tokenCountEstimate: number;
 };
 
 /**
- * Supported chart keys for the first MVP release.
+ * Supported chart keys for the MVP release (topic/emotion charts removed).
  */
 export type ChartKey =
-  | "emotionCurve"
   | "dropoffDistribution"
-  | "activeHourDistribution"
-  | "topicSwitchFrequency";
+  | "activeHourDistribution";
 
 /**
  * Supported frontend chart render types.
@@ -197,24 +106,12 @@ export type ScenarioEvaluateContext = {
 };
 
 /**
- * Structured subjective scoring result.
- */
-export type SubjectiveDimensionResult = {
-  dimension: string;
-  score: number;
-  reason: string;
-  evidence: string;
-  confidence: number;
-};
-
-/**
- * Aggregated objective metrics.
+ * Aggregated objective metrics (topic/emotion fields removed).
  */
 export type ObjectiveMetrics = {
   sessionDepthDistribution: Record<string, number>;
   dropoffTurnDistribution: Record<string, number>;
   avgResponseGapSec: number;
-  topicSwitchRate: number;
   userQuestionRepeatRate: number;
   agentResolutionSignalRate: number;
   escalationKeywordHitRate: number;
@@ -226,31 +123,42 @@ export type ObjectiveMetrics = {
 };
 
 /**
- * One detected turning point on the emotion curve.
+ * Supported implicit signal identifiers.
  */
-export type EmotionTurningPoint = {
-  sessionId: string;
-  turnIndex: number;
-  direction: "up" | "down";
-  scoreDelta: number;
+export type ImplicitSignalKey =
+  | "interestDeclineRisk"
+  | "understandingBarrierRisk";
+
+/**
+ * Structured implicit signal extracted from enriched behavior patterns.
+ */
+export type ImplicitSignal = {
+  signalKey: ImplicitSignalKey;
+  score: number;
+  severity: "low" | "medium" | "high";
+  triggeredRules: string[];
+  reason: string;
   evidence: string;
+  evidenceTurnRange: string;
+  confidence: number;
 };
 
 /**
- * Aggregated subjective metrics.
+ * Structured subjective scoring result.
+ */
+export type SubjectiveDimensionResult = {
+  dimension: string;
+  score: number;
+  reason: string;
+  evidence: string;
+  confidence: number;
+};
+
+/**
+ * Aggregated subjective metrics (emotionCurve / emotionTurningPoints removed).
  */
 export type SubjectiveMetrics = {
   status: "ready" | "degraded" | "pending_llm_integration";
-  emotionCurve: Array<{
-    sessionId: string;
-    topicSegmentId: string;
-    topicSegmentIndex: number;
-    turnIndex: number;
-    emotionScore: number;
-    emotionBaseScore: number;
-    emotionLabel: string;
-  }>;
-  emotionTurningPoints: EmotionTurningPoint[];
   dimensions: SubjectiveDimensionResult[];
   signals: ImplicitSignal[];
   goalCompletions: GoalCompletionResult[];
@@ -264,7 +172,6 @@ export type GoalCompletionStatus = "achieved" | "partial" | "failed" | "unclear"
 
 /**
  * Session-level goal completion result.
- * 目标：判断用户最初表达的意图在本 session 内是否被达成。
  */
 export type GoalCompletionResult = {
   sessionId: string;
@@ -283,14 +190,12 @@ export type GoalCompletionResult = {
  * Classified failure pattern that seeds a recovery trace.
  */
 export type RecoveryFailureType =
-  | "emotion-drop"
   | "ignore"
   | "understanding-barrier"
   | "unknown";
 
 /**
  * Session-level recovery trace result.
- * 目标：识别"失败 → Agent 纠偏 → 成功"模式，这是 Agent 改进最高价值的训练素材。
  */
 export type RecoveryTraceResult = {
   sessionId: string;
@@ -322,8 +227,6 @@ export type BadCaseTag =
   | "understanding_barrier"
   | "question_repeat"
   | "escalation_keyword"
-  | "emotion_drop"
-  | "off_topic_shift"
   | "long_response_gap";
 
 /**
@@ -336,11 +239,6 @@ export type BadCaseAsset = {
   severityScore: number;
   normalizedTranscriptHash: string;
   duplicateGroupKey: string;
-  topicSegmentId: string;
-  topicIndex?: number;
-  topicRange?: { startTurn: number; endTurn: number };
-  topicLabel: string;
-  topicSummary: string;
   tags: BadCaseTag[];
   transcript: string;
   evidence: Array<{
@@ -350,7 +248,7 @@ export type BadCaseAsset = {
   }>;
   autoSignals?: Array<
     | { kind: "negative_keyword"; keyword: string; turnIndex: number }
-    | { kind: "metric"; metric: "responseGap" | "shortTurns" | "topicSwitch"; value: number }
+    | { kind: "metric"; metric: "responseGap" | "shortTurns"; value: number }
     | { kind: "implicit_signal"; signalId: string }
   >;
   suggestedAction: string;
@@ -406,6 +304,116 @@ export type IngestResponse = {
   warnings: string[];
 };
 
+// ── Intent Pointer Dynamic Evaluation types ──────────────────────────────────
+
+/**
+ * One intent item within an IntentSequenceDoc.
+ */
+export type IntentItem = {
+  intentIndex: number;
+  intentText: string;
+  /** Which user-turn span in the original session this intent covers. */
+  turnSpanUserTurns: [number, number];
+  exampleUserQueries: string[];
+  successCriteria: string;
+  dependsOn: number[];
+  /** Historical excerpt (from original session) for context injection. */
+  historicalSpan?: string;
+};
+
+/**
+ * One refillable fact item that can be injected into SimUser queries.
+ */
+export type RefillableItem = {
+  refillIndex: number;
+  triggerCondition: string;
+  refillReference: string;
+  key: string;
+  injectionText: string;
+  confidence: number;
+};
+
+/**
+ * Full intent sequence document for one session (draft or locked).
+ */
+export type IntentSequenceDoc = {
+  schemaVersion: string;
+  sessionId: string;
+  schemaLockRevision: number;
+  lockStatus: "draft" | "locked";
+  intentSequence: IntentItem[];
+  refillables: RefillableItem[];
+};
+
+/**
+ * Judge label emitted by SimUser-as-Judge at each replay turn.
+ */
+export type IntentJudgeLabel =
+  | "SATISFIED"
+  | "NOT_SATISFIED"
+  | "DEVIATION"
+  | "FALLBACK_NOT_SATISFIED"
+  | "SKIPPED_GEN_FAILURE";
+
+/**
+ * One log entry from the SimUser dynamic replay loop.
+ */
+export type IntentRunLog = {
+  sessionId: string;
+  intentIndex: number;
+  turnCount: number;
+  budget: number;
+  userText: string;
+  assistantText: string;
+  judgeLabel: IntentJudgeLabel;
+  rationale?: string;
+  evidenceQuote?: string;
+  events: string[];
+};
+
+/**
+ * Per-session intent eval metrics computed from RunLog.
+ */
+export type SessionIntentMetrics = {
+  sessionId: string;
+  intentCount: number;
+  satisfiedCount: number;
+  budgetFailedCount: number;
+  totalReplayTurns: number;
+  historicalTurns: number;
+  /** Ratio of intents satisfied. */
+  intentCompletionRate: number;
+  /** Total clarification turns across all intents / k. */
+  clarificationEfficiency: number;
+  /** DEVIATION turns / total replay turns. */
+  deviationRate: number;
+  /** T_eval / T_hist. */
+  turnEfficiency: number;
+  skippedReason?: string;
+};
+
+/**
+ * Aggregated intent eval metrics across all sessions in one run.
+ */
+export type IntentEvalMetrics = {
+  aggregate: {
+    intentCompletionRate: number;
+    clarificationEfficiency: number;
+    deviationRate: number;
+    turnEfficiency: number;
+  };
+  perSession: SessionIntentMetrics[];
+};
+
+/**
+ * Status of the dynamic replay pipeline for one evaluation run.
+ */
+export type DynamicReplayStatus =
+  | "skipped"      // enableDynamicReplay=false
+  | "completed"    // all sessions processed
+  | "partial"      // some sessions failed but at least one succeeded
+  | "failed";      // all sessions failed or lock file missing
+
 /**
  * Evaluate response contract returned to frontend.
  */
@@ -413,7 +421,6 @@ export type EvaluateResponse = {
   runId: string;
   meta: EvaluateMeta;
   summaryCards: SummaryCard[];
-  topicSegments: TopicSegment[];
   enrichedRows: EnrichedChatlogRow[];
   enrichedCsv: string;
   artifactPath?: string;
@@ -425,11 +432,16 @@ export type EvaluateResponse = {
   metricRegistry?: EvalMetricRegistrySnapshot;
   scenarioEvaluation: ScenarioEvaluation | null;
   badCaseAssets: BadCaseAsset[];
-  /**
-   * DeepEval-aligned extended metrics (faithfulness/hallucination/toolCorrectness/...).
-   * Null fields mean the corresponding input was not provided.
-   */
+  /** DeepEval-aligned extended metrics. Null fields mean corresponding input was not provided. */
   extendedMetrics?: ExtendedMetricsBundle;
   charts: ChartPayload[];
   suggestions: string[];
+  /** Dynamic replay status. "skipped" when enableDynamicReplay=false. */
+  dynamicReplayStatus: DynamicReplayStatus;
+  /** Null when dynamicReplayStatus="skipped". */
+  intentMetrics: IntentEvalMetrics | null;
+  /** Per-session intent sequence documents. Null when dynamicReplayStatus="skipped". */
+  intentSequences: IntentSequenceDoc[] | null;
+  /** Per-session run logs. Null when dynamicReplayStatus="skipped". */
+  intentRunLogs: IntentRunLog[][] | null;
 };

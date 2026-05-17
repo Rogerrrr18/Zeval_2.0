@@ -23,7 +23,7 @@ type RemediationEvaluateInput = {
   runId: string;
   objectiveMetrics: Pick<
     ObjectiveMetrics,
-    "avgResponseGapSec" | "topicSwitchRate" | "userQuestionRepeatRate" | "agentResolutionSignalRate" | "escalationKeywordHitRate"
+    "avgResponseGapSec" | "userQuestionRepeatRate" | "agentResolutionSignalRate" | "escalationKeywordHitRate"
   >;
   subjectiveMetrics: {
     dimensions: Array<{
@@ -79,9 +79,6 @@ type RemediationEvaluateInput = {
     severityScore: number;
     normalizedTranscriptHash: string;
     duplicateGroupKey: string;
-    topicSegmentId: string;
-    topicLabel: string;
-    topicSummary: string;
     tags: string[];
     transcript: string;
     evidence: Array<{
@@ -835,7 +832,6 @@ function buildBadcasesJsonl(badCases: RemediationBadCase[]): string {
       JSON.stringify({
         case_id: item.caseKey,
         session_id: item.sessionId,
-        topic_label: item.topicLabel,
         severity_score: roundMetric(item.severityScore),
         turn_range: getTurnRange(item),
         current_output: getCurrentOutput(item),

@@ -26,14 +26,6 @@ export function buildSummaryCards(
   const empathyScore =
     subjectiveMetrics.dimensions.find((item) => item.dimension === "共情程度")?.score ?? 0;
   const highRiskSignals = subjectiveMetrics.signals.filter((item) => item.severity === "high").length;
-  const avgEmotionScore = subjectiveMetrics.emotionCurve.length
-    ? Number(
-        (
-          subjectiveMetrics.emotionCurve.reduce((sum, item) => sum + item.emotionScore, 0) /
-          subjectiveMetrics.emotionCurve.length
-        ).toFixed(1),
-      )
-    : 0;
   const goalCompletionTotal = subjectiveMetrics.goalCompletions.length;
   const achievedGoalCount = subjectiveMetrics.goalCompletions.filter((item) => item.status === "achieved").length;
   const goalCompletionRate = goalCompletionTotal ? Math.round((achievedGoalCount / goalCompletionTotal) * 100) : 0;
@@ -52,18 +44,6 @@ export function buildSummaryCards(
       label: "平均响应间隔",
       value: `${Math.round(objectiveMetrics.avgResponseGapSec)}s`,
       hint: "越低通常意味着更平顺的交互节奏",
-    },
-    {
-      key: "topicSwitch",
-      label: "话题切换率",
-      value: `${objectiveMetrics.topicSwitchRate.toFixed(2)}`,
-      hint: "这里按每个 session 的平均 segment 切换次数统计",
-    },
-    {
-      key: "emotion",
-      label: "平均情绪分",
-      value: `${avgEmotionScore}`,
-      hint: subjectiveMetrics.status === "degraded" ? "当前为规则近似 + 局部校正结果" : "当前为 segment 级结构化情绪分",
     },
     {
       key: "empathy",

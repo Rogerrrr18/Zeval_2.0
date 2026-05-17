@@ -132,7 +132,7 @@ export class DatabaseDatasetStore implements DatasetStore {
   ): Promise<void> {
     await (await this.getDatabase()).upsert({
       id,
-      workspaceId: this.workspaceId,
+      projectId: this.workspaceId,
       type,
       payload,
       createdAt,

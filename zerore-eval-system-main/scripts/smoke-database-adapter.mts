@@ -19,7 +19,7 @@ async function main(): Promise<void> {
 
   await database.upsert({
     id,
-    workspaceId,
+    projectId: workspaceId,
     type,
     payload: {
       ok: true,

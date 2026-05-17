@@ -1,12 +1,14 @@
 /**
  * @fileoverview Predefined chart templates for MVP chart rendering.
+ *
+ * P1 重构：已移除 emotionCurve（依赖 emotionScore）和 topicSwitchFrequency（依赖 isTopicSwitch）。
+ * 当前保留两个纯行为统计图表：dropoffDistribution 和 activeHourDistribution。
  */
 
 import type { ChartKey } from "@/types/pipeline";
 
 /**
  * Template declaration used by backend schema filler.
- * Runtime values in params are replaced by aggregated outputs.
  */
 export type ChartTemplate = {
   chartKey: ChartKey;
@@ -35,24 +37,9 @@ export type ChartTemplate = {
 };
 
 /**
- * MVP default chart templates. Keep template count small and stable.
+ * MVP default chart templates.
  */
 export const CHART_TEMPLATES: ChartTemplate[] = [
-  {
-    chartKey: "emotionCurve",
-    title: "情绪轨迹",
-    chartType: "line",
-    schema: {
-      xField: "turnIndex",
-      yField: "emotionScore",
-      seriesField: "sessionId",
-    },
-    params: {
-      dataSource: "enriched",
-      groupBy: ["sessionId", "turnIndex"],
-      aggregations: [{ op: "avg", field: "emotionScore", as: "emotionScore" }],
-    },
-  },
   {
     chartKey: "dropoffDistribution",
     title: "流失断点",
@@ -81,20 +68,6 @@ export const CHART_TEMPLATES: ChartTemplate[] = [
       dataSource: "enriched",
       groupBy: ["activeHour", "role"],
       aggregations: [{ op: "count", field: "content", as: "messageCount" }],
-    },
-  },
-  {
-    chartKey: "topicSwitchFrequency",
-    title: "话题切换",
-    chartType: "bar",
-    schema: {
-      xField: "sessionId",
-      yField: "topicSwitchCount",
-    },
-    params: {
-      dataSource: "enriched",
-      groupBy: ["sessionId"],
-      aggregations: [{ op: "sum", field: "isTopicSwitch", as: "topicSwitchCount" }],
     },
   },
 ];

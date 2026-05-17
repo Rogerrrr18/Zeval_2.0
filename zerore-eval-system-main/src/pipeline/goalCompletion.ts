@@ -268,20 +268,6 @@ function collectAchievementSignals(
     hit = true;
   }
 
-  if (rows.length >= 4) {
-    const lastEmotionScore = rows[rows.length - 1].emotionScore;
-    const firstThirdRows = rows.slice(0, Math.max(1, Math.floor(rows.length / 3)));
-    const firstAvg =
-      firstThirdRows.reduce((sum, row) => sum + row.emotionScore, 0) / firstThirdRows.length;
-    if (lastEmotionScore >= 65 && lastEmotionScore - firstAvg >= 15) {
-      triggeredRules.push("emotion-uplift-at-close");
-      achievementEvidence.push(
-        `情绪从 ${firstAvg.toFixed(1)} 回升到 ${lastEmotionScore.toFixed(1)}，末轮正向。`,
-      );
-      hit = true;
-    }
-  }
-
   return hit;
 }
 

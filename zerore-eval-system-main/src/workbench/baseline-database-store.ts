@@ -23,7 +23,7 @@ export class DatabaseWorkbenchBaselineStore implements WorkbenchBaselineStore {
   async save(snapshot: WorkbenchBaselineSnapshot): Promise<void> {
     await (await this.getDatabase()).upsert({
       id: baselineRecordId(snapshot.customerId, snapshot.runId),
-      workspaceId: this.workspaceId,
+      projectId: this.workspaceId,
       type: WORKBENCH_BASELINE_TYPE,
       payload: snapshot,
       createdAt: snapshot.createdAt,

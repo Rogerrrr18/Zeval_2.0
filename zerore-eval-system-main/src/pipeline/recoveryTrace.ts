@@ -225,37 +225,6 @@ async function enhanceRecoveryTraceWithLlm(
 function detectFailureCandidate(rows: EnrichedChatlogRow[]): FailureCandidate | null {
   const candidates: FailureCandidate[] = [];
 
-  for (const row of rows) {
-    if (row.emotionScore <= 40) {
-      candidates.push({
-        turnIndex: row.turnIndex,
-        failureType: "emotion-drop",
-        triggeredRule: "emotion-score-drop",
-        evidenceRows: [row],
-      });
-      break;
-    }
-  }
-
-  for (let index = 1; index < rows.length; index += 1) {
-    const previousRow = rows[index - 1];
-    const currentRow = rows[index];
-    if (
-      previousRow.role === "user" &&
-      previousRow.isQuestion &&
-      currentRow.role === "assistant" &&
-      currentRow.isTopicSwitch
-    ) {
-      candidates.push({
-        turnIndex: previousRow.turnIndex,
-        failureType: "ignore",
-        triggeredRule: "question-followed-by-topic-switch",
-        evidenceRows: [previousRow, currentRow],
-      });
-      break;
-    }
-  }
-
   const confusionRow = rows.find((row) => row.role === "user" && matchAny(row.content, CONFUSION_PATTERNS));
   if (confusionRow) {
     candidates.push({
@@ -286,8 +255,6 @@ function detectRecoveryPoint(
   candidate: FailureCandidate,
   goalCompletion?: GoalCompletionResult,
 ): EnrichedChatlogRow | null {
-  const failureRow = rows.find((row) => row.turnIndex === candidate.turnIndex);
-  const failureScore = failureRow?.emotionScore ?? 40;
   const windowRows = rows.filter(
     (row) => row.turnIndex > candidate.turnIndex && row.turnIndex <= candidate.turnIndex + 4,
   );
@@ -296,12 +263,11 @@ function detectRecoveryPoint(
     if (row.role !== "assistant") {
       continue;
     }
-    const emotionRecovered = row.emotionScore >= 60 || row.emotionScore - failureScore >= 20;
     const repairSignal =
       matchAny(row.content, APOLOGY_PATTERNS) ||
       matchAny(row.content, REPHRASE_PATTERNS) ||
       matchAny(row.content, CLARIFICATION_PATTERNS);
-    if (emotionRecovered || repairSignal) {
+    if (repairSignal) {
       return row;
     }
   }
@@ -335,9 +301,6 @@ function buildRepairStrategyByRule(
   }
   if (recoveryRow.isQuestion) {
     return "追问澄清";
-  }
-  if (failureType === "emotion-drop") {
-    return "情绪安抚后修复";
   }
   if (failureType === "ignore") {
     return "回到用户原问题";
@@ -409,9 +372,6 @@ function detectRecoveryTrigger(recoveryRow: EnrichedChatlogRow): string {
   }
   if (matchAny(recoveryRow.content, CLARIFICATION_PATTERNS)) {
     return "assistant-clarification";
-  }
-  if (recoveryRow.emotionScore >= 60) {
-    return "emotion-score-recovered";
   }
   return "recovery-window-hit";
 }

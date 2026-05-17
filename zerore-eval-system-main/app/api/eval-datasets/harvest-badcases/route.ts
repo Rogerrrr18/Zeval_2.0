@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const store = createDatasetStore({ workspaceId: context.workspaceId });
     const result = await harvestBadCasesToDataset({
       store,
-      evaluate: parsedBody.data.evaluate as EvaluateResponse,
+      evaluate: parsedBody.data.evaluate as unknown as EvaluateResponse,
       baselineVersion: parsedBody.data.baselineVersion,
       allowNearDuplicate: parsedBody.data.allowNearDuplicate,
     });

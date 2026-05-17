@@ -4,7 +4,7 @@
 
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { EvaluateResponse } from "@/types/pipeline";
 import styles from "./onlineEval.module.css";
 
@@ -22,7 +22,6 @@ export function OnlineCompareCharts(props: OnlineCompareChartsProps) {
   const { baseline, current } = props;
   const dimensionRows = buildDimensionCompareRows(baseline, current);
   const objectiveRows = buildObjectiveCompareRows(baseline, current);
-  const emotionRows = buildEmotionCurveCompareRows(baseline, current);
   const signalRows = buildSignalCompareRows(baseline, current);
 
   return (
@@ -73,31 +72,6 @@ export function OnlineCompareCharts(props: OnlineCompareChartsProps) {
               <Bar dataKey="baseline" name="基线" fill="#a78bfa" radius={[8, 8, 0, 0]} />
               <Bar dataKey="current" name="在线回放" fill="#34d399" radius={[8, 8, 0, 0]} />
             </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </article>
-
-      <article className={styles.compareCard}>
-        <h3>情绪曲线对比</h3>
-        <p>按主观情绪曲线点对齐（取较短长度对齐），纵轴 0–100。</p>
-        <div className={styles.chartCanvas}>
-          <ResponsiveContainer width="100%" height={280} minHeight={280}>
-            <LineChart data={emotionRows}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#243041" vertical={false} />
-              <XAxis dataKey="idx" stroke="#8ea0ba" tickLine={false} axisLine={false} />
-              <YAxis domain={[0, 100]} stroke="#8ea0ba" tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  border: "1px solid rgba(148, 163, 184, 0.16)",
-                  borderRadius: "16px",
-                  backgroundColor: "rgba(9, 14, 28, 0.96)",
-                }}
-                labelStyle={{ color: "#f8fafc" }}
-              />
-              <Legend wrapperStyle={{ color: "#9fb0c9" }} />
-              <Line type="monotone" dataKey="baseline" name="基线" stroke="#818cf8" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="current" name="在线回放" stroke="#22d3ee" strokeWidth={2} dot={false} />
-            </LineChart>
           </ResponsiveContainer>
         </div>
       </article>
@@ -160,39 +134,11 @@ function buildObjectiveCompareRows(
 ): Array<{ name: string; baseline: number; current: number }> {
   return [
     {
-      name: "话题切换率",
-      baseline: baseline.objectiveMetrics.topicSwitchRate,
-      current: current.objectiveMetrics.topicSwitchRate,
-    },
-    {
       name: "平均响应间隔(s)",
       baseline: baseline.objectiveMetrics.avgResponseGapSec,
       current: current.objectiveMetrics.avgResponseGapSec,
     },
   ];
-}
-
-/**
- * @param baseline Baseline evaluate response.
- * @param current Current evaluate response.
- * @returns Rows for emotion line chart.
- */
-function buildEmotionCurveCompareRows(
-  baseline: EvaluateResponse,
-  current: EvaluateResponse,
-): Array<{ idx: number; baseline: number; current: number }> {
-  const baseCurve = baseline.subjectiveMetrics.emotionCurve;
-  const curCurve = current.subjectiveMetrics.emotionCurve;
-  const length = Math.min(baseCurve.length, curCurve.length);
-  const rows: Array<{ idx: number; baseline: number; current: number }> = [];
-  for (let index = 0; index < length; index += 1) {
-    rows.push({
-      idx: index,
-      baseline: baseCurve[index]?.emotionScore ?? 0,
-      current: curCurve[index]?.emotionScore ?? 0,
-    });
-  }
-  return rows;
 }
 
 /**

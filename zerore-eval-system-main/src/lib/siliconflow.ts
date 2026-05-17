@@ -37,6 +37,10 @@ type SiliconFlowLogContext = {
   runId?: string;
   sessionId?: string;
   segmentId?: string;
+  /** Override default judge temperature for deterministic extraction stages. */
+  temperature?: number;
+  /** Optional seed for deterministic outputs (intent extraction, etc.). */
+  seed?: number;
 };
 
 /**
@@ -75,13 +79,16 @@ export async function requestSiliconFlowChatCompletion(
         model,
         messages,
         stream: false,
-        temperature: ZEVAL_JUDGE_TEMPERATURE,
+        temperature: context.temperature ?? ZEVAL_JUDGE_TEMPERATURE,
         top_p: ZEVAL_JUDGE_TOP_P,
         max_tokens: ZEVAL_JUDGE_MAX_TOKENS,
         response_format: {
           type: "json_object",
         },
       };
+      if (typeof context.seed === "number") {
+        requestBody.seed = context.seed;
+      }
       const enableThinking = resolveOptionalBoolean(
         process.env.ZEVAL_JUDGE_ENABLE_THINKING ??
           process.env.ZEVAL_LLM_ENABLE_THINKING ??

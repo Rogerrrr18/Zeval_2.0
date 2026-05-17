@@ -41,18 +41,6 @@ const BASE_DEFINITIONS: EvalMetricDefinition[] = [
     evaluator: "rule",
   },
   {
-    id: "topicSwitchRate",
-    displayName: "话题切换控制",
-    description: "会话中的 topic 切换是否保持在可控范围内。",
-    category: "objective",
-    kind: "objective",
-    scope: "dataset",
-    threshold: 0.72,
-    direction: "higher-is-better",
-    requiredFields: ["turns"],
-    evaluator: "rule",
-  },
-  {
     id: "agentResolutionSignalRate",
     displayName: "解决态信号",
     description: "助手是否给出明确处理承诺、下一步或解决动作。",
@@ -320,10 +308,6 @@ function resolveScore(
   if (definition.id === "avgResponseGapSec") {
     const score = clamp01(1 - objective.avgResponseGapSec / 120);
     return ready(score, `${Math.round(objective.avgResponseGapSec)}s`, `平均响应间隔 ${Math.round(objective.avgResponseGapSec)} 秒。`);
-  }
-  if (definition.id === "topicSwitchRate") {
-    const score = clamp01(1 - objective.topicSwitchRate / 3);
-    return ready(score, objective.topicSwitchRate.toFixed(2), `平均 topic 切换 ${objective.topicSwitchRate.toFixed(2)} 次/会话。`);
   }
   if (definition.id === "agentResolutionSignalRate") {
     return ready(objective.agentResolutionSignalRate, `${Math.round(objective.agentResolutionSignalRate * 100)}%`, "末轮助手解决态信号覆盖率。");

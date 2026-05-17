@@ -1,26 +1,33 @@
 /**
- * @fileoverview Projection from EvaluateResponse into relational quality records.
+ * @fileoverview Projection from EvaluateResponse into typed relational records.
+ *
+ * P1 重构：
+ *  - 移除 DbTopicSegment / DbBusinessKpiSignal / workspaceId
+ *  - 新增 intent_sequences / intent_run_logs / intent_eval_metrics 投影
+ *  - 新增 suggestions 投影
+ *  - 所有记录使用 projectId (uuid string)
  */
 
 import type { DbRecord, ZeroreDatabase } from "@/db";
 import type {
-  DbBusinessKpiSignal,
   DbEvaluationProjectionRecord,
   DbEvaluationRun,
   DbEvidenceSpan,
+  DbIntentEvalMetrics,
+  DbIntentRunLog,
+  DbIntentSequence,
   DbObjectiveSignal,
   DbRiskTag,
   DbSubjectiveSignal,
-  DbTopicSegment,
+  DbSuggestion,
 } from "@/db/schema";
-import type { EvaluateResponse, ObjectiveMetrics } from "@/types/pipeline";
+import type { EvaluateResponse, IntentRunLog, ObjectiveMetrics } from "@/types/pipeline";
 
 export type EvaluationProjectionOptions = {
-  organizationId?: string;
-  projectId?: string;
-  workspaceId: string;
+  projectId: string;
   runId?: string;
   useLlm?: boolean;
+  enableDynamicReplay?: boolean;
 };
 
 export type EvaluationProjection = {
@@ -28,12 +35,14 @@ export type EvaluationProjection = {
   dbRecords: DbRecord[];
   summary: {
     evaluationRuns: number;
-    topicSegments: number;
+    intentSequences: number;
+    intentRunLogs: number;
+    intentEvalMetrics: number;
     objectiveSignals: number;
     subjectiveSignals: number;
-    businessKpiSignals: number;
     evidenceSpans: number;
     riskTags: number;
+    suggestions: number;
   };
 };
 
@@ -41,7 +50,7 @@ type EvidenceInput = {
   kind: string;
   quote: string;
   sessionId?: string;
-  topicSegmentId?: string;
+  intentIndex?: number;
   startTurn?: number;
   endTurn?: number;
   source?: DbEvidenceSpan["source"];
@@ -58,26 +67,23 @@ export function buildEvaluationProjection(
   response: EvaluateResponse,
   options: EvaluationProjectionOptions,
 ): EvaluationProjection {
-  const workspaceId = options.workspaceId;
-  const organizationId = options.organizationId;
-  const projectId = options.projectId ?? workspaceId;
+  const { projectId } = options;
   const now = response.meta.generatedAt || new Date().toISOString();
   const runId = options.runId ?? response.runId;
-  const evaluationRunId = stableId("evaluation-run", workspaceId, runId);
+  const evaluationRunId = stableId("eval-run", projectId, runId);
   const evidenceSpans: DbEvidenceSpan[] = [];
+
+  // ── Evidence span builder ────────────────────────────────────────────────────
 
   const createEvidence = (input: EvidenceInput): string | undefined => {
     const quote = input.quote.trim();
-    if (!quote) {
-      return undefined;
-    }
+    if (!quote) return undefined;
     const id = stableId(
       "evidence",
-      workspaceId,
+      projectId,
       runId,
       input.kind,
       input.sessionId ?? "run",
-      input.topicSegmentId ?? "none",
       input.startTurn ?? "na",
       quote,
     );
@@ -85,12 +91,10 @@ export function buildEvaluationProjection(
       evidenceSpans.push({
         table: "evidence_spans",
         id,
-        workspaceId,
+        projectId,
         evaluationRunId,
         sessionId: input.sessionId,
-        topicSegmentId: input.topicSegmentId
-          ? stableId("topic-segment", workspaceId, runId, input.topicSegmentId)
-          : undefined,
+        intentIndex: input.intentIndex,
         evidenceKind: input.kind,
         quote,
         startTurn: input.startTurn,
@@ -102,104 +106,70 @@ export function buildEvaluationProjection(
     return id;
   };
 
+  // ── evaluation_runs ──────────────────────────────────────────────────────────
+
   const evaluationRun: DbEvaluationRun = {
     table: "evaluation_runs",
     id: evaluationRunId,
-    workspaceId,
-    runId,
+    projectId,
+    runKey: runId,
     scenarioId: response.meta.scenarioContext?.scenarioId,
     status: "succeeded",
     useLlm: Boolean(options.useLlm),
+    dynamicReplayEnabled: Boolean(options.enableDynamicReplay),
     sessionCount: response.meta.sessions,
     messageCount: response.meta.messages,
     hasTimestamp: response.meta.hasTimestamp,
     warnings: response.meta.warnings,
     artifactUri: response.artifactPath,
     generatedAt: response.meta.generatedAt,
-    createdAt: now,
-    rawResponse: {
+    reportPayload: {
       summaryCards: response.summaryCards,
       piiRedaction: response.meta.piiRedaction,
       scenarioContext: response.meta.scenarioContext,
-    },
-  };
-
-  const topicSegments: DbTopicSegment[] = response.topicSegments.map((segment) => ({
-    table: "topic_segments",
-    id: stableId("topic-segment", workspaceId, runId, segment.topicSegmentId),
-    workspaceId,
-    evaluationRunId,
-    sessionId: segment.sessionId,
-    topicSegmentId: segment.topicSegmentId,
-    topicSegmentIndex: segment.topicSegmentIndex,
-    label: segment.topicLabel,
-    summary: segment.topicSummary,
-    source: segment.topicSource,
-    confidence: segment.topicConfidence,
-    startTurn: segment.startTurn,
-    endTurn: segment.endTurn,
-    messageCount: segment.messageCount,
-    emotionPolarity: segment.emotionPolarity,
-    emotionIntensity: segment.emotionIntensity,
-    emotionScore: segment.emotionScore,
-    metadata: {
-      emotionLabel: segment.emotionLabel,
-      emotionBaseScore: segment.emotionBaseScore,
-      emotionEvidence: segment.emotionEvidence,
-      emotionConfidence: segment.emotionConfidence,
-      emotionFactors: {
-        valenceWeight: segment.emotionValenceWeight,
-        lengthWeight: segment.emotionLengthWeight,
-        styleWeight: segment.emotionStyleWeight,
-        gapWeight: segment.emotionGapWeight,
-        recoveryWeight: segment.emotionRecoveryWeight,
-        riskPenalty: segment.emotionRiskPenalty,
-      },
+      dynamicReplayStatus: response.dynamicReplayStatus,
     },
     createdAt: now,
-  }));
+  };
 
-  for (const segment of response.topicSegments) {
-    createEvidence({
-      kind: "topic_emotion",
-      quote: segment.emotionEvidence,
-      sessionId: segment.sessionId,
-      topicSegmentId: segment.topicSegmentId,
-      startTurn: segment.startTurn,
-      endTurn: segment.endTurn,
-      source: segment.emotionSource,
-    });
-  }
+  // ── objective_signals ─────────────────────────────────────────────────────────
 
   const objectiveSignals = buildObjectiveSignals(response.objectiveMetrics, {
-    workspaceId,
+    projectId,
     evaluationRunId,
     now,
   });
 
-  const subjectiveSignals: DbSubjectiveSignal[] = response.subjectiveMetrics.dimensions.map((dimension) => {
-    const evidenceSpanId = createEvidence({
-      kind: "subjective_dimension",
-      quote: dimension.evidence,
-      source: "llm",
-    });
-    return {
-      table: "subjective_signals",
-      id: stableId("subjective-signal", workspaceId, runId, dimension.dimension),
-      workspaceId,
-      evaluationRunId,
-      dimensionKey: slugify(dimension.dimension),
-      dimensionLabel: dimension.dimension,
-      score: dimension.score,
-      reason: dimension.reason,
-      source: "llm",
-      confidence: dimension.confidence,
-      evidenceSpanId,
-      createdAt: now,
-    };
-  });
+  // ── subjective_signals ────────────────────────────────────────────────────────
+
+  const subjectiveSignals: DbSubjectiveSignal[] = response.subjectiveMetrics.dimensions.map(
+    (dimension) => {
+      const evidenceSpanId = createEvidence({
+        kind: "subjective_dimension",
+        quote: dimension.evidence,
+        source: "llm",
+      });
+      return {
+        table: "subjective_signals",
+        id: stableId("subjective-signal", projectId, runId, dimension.dimension),
+        projectId,
+        evaluationRunId,
+        dimensionKey: slugify(dimension.dimension),
+        dimensionLabel: dimension.dimension,
+        score: dimension.score,
+        reason: dimension.reason,
+        source: "llm",
+        confidence: dimension.confidence,
+        evidenceSpanId,
+        createdAt: now,
+      };
+    },
+  );
+
+  // ── risk_tags ─────────────────────────────────────────────────────────────────
 
   const riskTags: DbRiskTag[] = [];
+
   for (const signal of response.subjectiveMetrics.signals) {
     const evidenceSpanId = createEvidence({
       kind: "implicit_signal",
@@ -211,12 +181,13 @@ export function buildEvaluationProjection(
     });
     riskTags.push({
       table: "risk_tags",
-      id: stableId("risk-tag", workspaceId, runId, signal.signalKey),
-      workspaceId,
+      id: stableId("risk-tag", projectId, runId, signal.signalKey),
+      projectId,
       evaluationRunId,
       sessionId: parseEvidenceSessionId(signal.evidenceTurnRange),
       tagKey: signal.signalKey,
-      severityScore: signal.score,
+      score: signal.score,
+      severity: signal.severity,
       reason: signal.reason,
       evidenceSpanId,
       source: "inferred",
@@ -226,26 +197,27 @@ export function buildEvaluationProjection(
 
   for (const badCase of response.badCaseAssets) {
     for (const tag of badCase.tags) {
-      const evidenceSpanId = badCase.evidence[0]
+      const quote = badCase.evidence
+        .map((item) => `[turn ${item.turnIndex}] ${item.content}`)
+        .join("\n");
+      const evidenceSpanId = quote
         ? createEvidence({
             kind: "bad_case",
-            quote: badCase.evidence.map((item) => `[turn ${item.turnIndex}] ${item.content}`).join("\n"),
+            quote,
             sessionId: badCase.sessionId,
-            topicSegmentId: badCase.topicSegmentId,
-            startTurn: badCase.evidence[0].turnIndex,
+            startTurn: badCase.evidence[0]?.turnIndex,
             endTurn: badCase.evidence[badCase.evidence.length - 1]?.turnIndex,
             source: "rule",
           })
         : undefined;
       riskTags.push({
         table: "risk_tags",
-        id: stableId("risk-tag", workspaceId, runId, badCase.caseKey, tag),
-        workspaceId,
+        id: stableId("risk-tag", projectId, runId, badCase.caseKey, tag),
+        projectId,
         evaluationRunId,
         sessionId: badCase.sessionId,
-        topicSegmentId: stableId("topic-segment", workspaceId, runId, badCase.topicSegmentId),
         tagKey: tag,
-        severityScore: badCase.severityScore,
+        score: badCase.severityScore,
         reason: badCase.title,
         evidenceSpanId,
         source: "rule",
@@ -254,38 +226,142 @@ export function buildEvaluationProjection(
     }
   }
 
-  const businessKpiSignals = buildBusinessKpiSignals(response, {
-    workspaceId,
+  // ── suggestions ───────────────────────────────────────────────────────────────
+
+  const suggestions: DbSuggestion[] = response.suggestions.map((text, index) => ({
+    table: "suggestions",
+    id: stableId("suggestion", projectId, runId, String(index)),
+    projectId,
     evaluationRunId,
-    now,
-    createEvidence,
-  });
+    title: extractSuggestionTitle(text),
+    problem: text,
+    impact: "",
+    action: text,
+    triggerMetricKeys: [],
+    priority: index + 1,
+    createdAt: now,
+  }));
+
+  // ── intent_sequences / intent_run_logs / intent_eval_metrics ─────────────────
+
+  const intentSequences: DbIntentSequence[] = [];
+  const intentRunLogs: DbIntentRunLog[] = [];
+  const intentEvalMetrics: DbIntentEvalMetrics[] = [];
+
+  if (
+    response.dynamicReplayStatus !== "skipped" &&
+    response.intentSequences &&
+    response.intentRunLogs
+  ) {
+    for (const seqDoc of response.intentSequences) {
+      const intentSequenceId = stableId(
+        "intent-seq",
+        projectId,
+        runId,
+        seqDoc.sessionId,
+      );
+      intentSequences.push({
+        table: "intent_sequences",
+        id: intentSequenceId,
+        projectId,
+        evaluationRunId,
+        sessionId: seqDoc.sessionId,
+        schemaVersion: seqDoc.schemaVersion,
+        schemaLockRevision: seqDoc.schemaLockRevision,
+        intentSequence: seqDoc.intentSequence as unknown as Record<string, unknown>[],
+        refillables: seqDoc.refillables as unknown as Record<string, unknown>[],
+        lockStatus: seqDoc.lockStatus,
+        intentCount: seqDoc.intentSequence.length,
+        refillableCount: seqDoc.refillables.length,
+        updatedAt: now,
+        createdAt: now,
+      });
+    }
+
+    const seqIdBySession = new Map<string, string>(
+      response.intentSequences.map((seq) => [
+        seq.sessionId,
+        stableId("intent-seq", projectId, runId, seq.sessionId),
+      ]),
+    );
+
+    for (const sessionLogs of response.intentRunLogs) {
+      for (const log of sessionLogs) {
+        const intentSequenceId = seqIdBySession.get(log.sessionId) ?? stableId("intent-seq", projectId, runId, log.sessionId);
+        intentRunLogs.push({
+          table: "intent_run_logs",
+          id: stableId("intent-log", projectId, runId, log.sessionId, String(log.intentIndex), String(log.turnCount)),
+          projectId,
+          evaluationRunId,
+          sessionId: log.sessionId,
+          intentSequenceId,
+          intentIndex: log.intentIndex,
+          turnCount: log.turnCount,
+          budget: log.budget,
+          userText: log.userText,
+          assistantText: log.assistantText,
+          judgeLabel: log.judgeLabel,
+          rationale: log.rationale,
+          evidenceQuote: log.evidenceQuote,
+          events: log.events,
+          createdAt: now,
+        });
+      }
+    }
+
+    // Compute per-session intent eval metrics from run logs
+    if (response.intentMetrics) {
+      for (const sessionMetrics of response.intentMetrics.perSession) {
+        const intentSequenceId = seqIdBySession.get(sessionMetrics.sessionId) ?? stableId("intent-seq", projectId, runId, sessionMetrics.sessionId);
+        intentEvalMetrics.push({
+          table: "intent_eval_metrics",
+          id: stableId("intent-metrics", projectId, runId, sessionMetrics.sessionId),
+          projectId,
+          evaluationRunId,
+          sessionId: sessionMetrics.sessionId,
+          intentSequenceId,
+          intentCompletionRate: sessionMetrics.intentCompletionRate,
+          clarificationEfficiency: sessionMetrics.clarificationEfficiency,
+          deviationRate: sessionMetrics.deviationRate,
+          turnEfficiency: sessionMetrics.turnEfficiency,
+          intentCount: sessionMetrics.intentCount,
+          satisfiedCount: sessionMetrics.satisfiedCount,
+          budgetFailedCount: sessionMetrics.budgetFailedCount,
+          totalReplayTurns: sessionMetrics.totalReplayTurns,
+          skippedReason: sessionMetrics.skippedReason,
+          createdAt: now,
+        });
+      }
+    }
+  }
+
+  // ── Assemble ──────────────────────────────────────────────────────────────────
 
   const records: DbEvaluationProjectionRecord[] = [
     evaluationRun,
-    ...topicSegments,
+    ...intentSequences,
+    ...intentRunLogs,
+    ...intentEvalMetrics,
     ...objectiveSignals,
     ...subjectiveSignals,
-    ...businessKpiSignals,
     ...evidenceSpans,
     ...riskTags,
-  ].map((record) => ({
-    ...record,
-    organizationId,
-    projectId,
-  }));
+    ...suggestions,
+  ];
 
   return {
     records,
     dbRecords: records.map(toDbRecord),
     summary: {
       evaluationRuns: 1,
-      topicSegments: topicSegments.length,
+      intentSequences: intentSequences.length,
+      intentRunLogs: intentRunLogs.length,
+      intentEvalMetrics: intentEvalMetrics.length,
       objectiveSignals: objectiveSignals.length,
       subjectiveSignals: subjectiveSignals.length,
-      businessKpiSignals: businessKpiSignals.length,
       evidenceSpans: evidenceSpans.length,
       riskTags: riskTags.length,
+      suggestions: suggestions.length,
     },
   };
 }
@@ -305,151 +381,47 @@ export async function persistEvaluationProjection(
   }
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
 function buildObjectiveSignals(
   metrics: ObjectiveMetrics,
   context: {
-    workspaceId: string;
+    projectId: string;
     evaluationRunId: string;
     now: string;
   },
 ): DbObjectiveSignal[] {
-  return Object.entries(metrics).map(([metricKey, value]) => {
-    const id = stableId("objective-signal", context.workspaceId, context.evaluationRunId, metricKey);
-    return {
-      table: "objective_signals",
-      id,
-      workspaceId: context.workspaceId,
-      evaluationRunId: context.evaluationRunId,
-      metricKey,
-      metricLabel: metricKey,
-      numericValue: typeof value === "number" ? value : undefined,
-      jsonValue: typeof value === "number" ? undefined : value,
-      reason: "Objective metric generated by the local evaluation pipeline.",
-      source: "rule",
-      confidence: 1,
-      createdAt: context.now,
-    };
-  });
-}
-
-function buildBusinessKpiSignals(
-  response: EvaluateResponse,
-  context: {
-    workspaceId: string;
-    evaluationRunId: string;
-    now: string;
-    createEvidence: (input: EvidenceInput) => string | undefined;
-  },
-): DbBusinessKpiSignal[] {
-  const signals: DbBusinessKpiSignal[] = [];
-
-  for (const goal of response.subjectiveMetrics.goalCompletions) {
-    const evidenceSpanId = context.createEvidence({
-      kind: "goal_completion",
-      quote: [...goal.achievementEvidence, ...goal.failureReasons].join("\n"),
-      sessionId: goal.sessionId,
-      source: goal.source,
-    });
-    signals.push({
-      table: "business_kpi_signals",
-      id: stableId("business-kpi", context.workspaceId, context.evaluationRunId, "goal", goal.sessionId),
-      workspaceId: context.workspaceId,
-      evaluationRunId: context.evaluationRunId,
-      sessionId: goal.sessionId,
-      kpiKey: "goalCompletion",
-      status: goal.status,
-      score: goal.score,
-      value: {
-        userIntent: goal.userIntent,
-        intentSource: goal.intentSource,
-        triggeredRules: goal.triggeredRules,
-      },
-      reason: goal.failureReasons.join("; ") || goal.achievementEvidence.join("; "),
-      source: goal.source,
-      confidence: goal.confidence,
-      evidenceSpanId,
-      createdAt: context.now,
-    });
-  }
-
-  for (const trace of response.subjectiveMetrics.recoveryTraces) {
-    const evidenceSpanId = context.createEvidence({
-      kind: "recovery_trace",
-      quote: trace.evidence.map((item) => `[turn ${item.turnIndex}] ${item.content}`).join("\n"),
-      sessionId: trace.sessionId,
-      startTurn: trace.failureTurn ?? undefined,
-      endTurn: trace.recoveryTurn ?? undefined,
-      source: "inferred",
-    });
-    signals.push({
-      table: "business_kpi_signals",
-      id: stableId("business-kpi", context.workspaceId, context.evaluationRunId, "recovery", trace.sessionId),
-      workspaceId: context.workspaceId,
-      evaluationRunId: context.evaluationRunId,
-      sessionId: trace.sessionId,
-      kpiKey: "recoveryTrace",
-      status: trace.status,
-      score: trace.qualityScore,
-      value: {
-        failureTurn: trace.failureTurn,
-        recoveryTurn: trace.recoveryTurn,
-        spanTurns: trace.spanTurns,
-        failureType: trace.failureType,
-        repairStrategy: trace.repairStrategy,
-        repairStrategySource: trace.repairStrategySource,
-        triggeredRules: trace.triggeredRules,
-      },
-      reason: trace.repairStrategy ?? trace.failureType,
-      source: "inferred",
-      confidence: trace.confidence,
-      evidenceSpanId,
-      createdAt: context.now,
-    });
-  }
-
-  for (const kpi of response.scenarioEvaluation?.kpis ?? []) {
-    const evidenceSpanId = context.createEvidence({
-      kind: "scenario_kpi",
-      quote: kpi.topEvidence.join("\n"),
-      source: "rule",
-    });
-    signals.push({
-      table: "business_kpi_signals",
-      id: stableId("business-kpi", context.workspaceId, context.evaluationRunId, "scenario", kpi.id),
-      workspaceId: context.workspaceId,
-      evaluationRunId: context.evaluationRunId,
-      kpiKey: kpi.id,
-      status: kpi.status,
-      score: kpi.score,
-      value: {
-        displayName: kpi.displayName,
-        description: kpi.description,
-        successThreshold: kpi.successThreshold,
-        degradedThreshold: kpi.degradedThreshold,
-        contributions: kpi.contributions,
-      },
-      reason: kpi.topEvidence.join("; "),
-      source: "rule",
-      confidence: 1,
-      evidenceSpanId,
-      createdAt: context.now,
-    });
-  }
-
-  return signals;
+  return Object.entries(metrics).map(([metricKey, value]) => ({
+    table: "objective_signals",
+    id: stableId("objective-signal", context.projectId, context.evaluationRunId, metricKey),
+    projectId: context.projectId,
+    evaluationRunId: context.evaluationRunId,
+    metricKey,
+    numericValue: typeof value === "number" ? value : undefined,
+    jsonValue: typeof value === "number" ? undefined : value,
+    source: "rule",
+    confidence: 1,
+    createdAt: context.now,
+  }));
 }
 
 function toDbRecord(record: DbEvaluationProjectionRecord): DbRecord {
+  const base = record as DbEvaluationProjectionRecord & { createdAt?: string };
   return {
     id: record.id,
-    organizationId: record.organizationId,
     projectId: record.projectId,
-    workspaceId: record.workspaceId,
     type: record.table,
     payload: record,
-    createdAt: record.createdAt,
-    updatedAt: record.createdAt,
+    createdAt: base.createdAt ?? new Date().toISOString(),
+    updatedAt: base.createdAt ?? new Date().toISOString(),
   };
+}
+
+function extractSuggestionTitle(text: string): string {
+  // Extract priority label (P0/P1/P2) and first clause as title
+  const match = /^(P\d)[:：](.{0,40})/.exec(text);
+  if (match) return `${match[1]} ${match[2].trim()}`.slice(0, 60);
+  return text.slice(0, 60);
 }
 
 function parseEvidenceSessionId(value: string): string | undefined {
@@ -459,13 +431,8 @@ function parseEvidenceSessionId(value: string): string | undefined {
 
 function parseEvidenceTurnRange(value: string): { startTurn?: number; endTurn?: number } {
   const match = /:(\d+)-(\d+)/.exec(value);
-  if (!match) {
-    return {};
-  }
-  return {
-    startTurn: Number(match[1]),
-    endTurn: Number(match[2]),
-  };
+  if (!match) return {};
+  return { startTurn: Number(match[1]), endTurn: Number(match[2]) };
 }
 
 function stableId(...parts: Array<string | number>): string {
@@ -476,7 +443,7 @@ function slugify(value: string): string {
   return (
     value
       .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+      .replace(/[^a-z0-9一-龥]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 120) || "unknown"
   );
